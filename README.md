@@ -29,14 +29,17 @@ JSON endpoints are static files, and there is no POST refresh API.
 
 ## Included extractors and status meaning
 
-Automated source workbooks currently cover KPIs 05, 07, 08, 11, 12 and 13.
+Automated source workbooks currently cover KPIs 05, 07, 08, 11, 12 and 13
+(GASTAT, fixed URLs) and KPI 16 (Ministry of Finance quarterly budget
+performance reports, "Non-financial Assets (CAPEX)", quarterly from 2022; the
+latest report per fiscal year is discovered from the MOF year pages).
 Other KPIs appear in the status table as unavailable until their source routes
 and access are verified. KPI 10 (MISA) remains excluded by instruction.
 Green indicates a configured extraction succeeded; red indicates a failed or
 unavailable connector, no data, or intentional exclusion. Check observation
 dates; success does not imply that the source has published a newer period.
 
-The original fixed URLs in the mart are used. The exporter produces:
+The original fixed URLs in the mart are used for GASTAT KPIs. The exporter produces:
 
 - `docs/data/status.json`
 - `docs/data/facts.json`
