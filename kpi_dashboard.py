@@ -6,6 +6,7 @@ import os
 import threading
 import time
 import calendar
+import re
 from copy import copy
 from io import BytesIO
 from datetime import date, datetime
@@ -13,7 +14,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 from urllib.request import Request, urlopen
 
 from openpyxl import Workbook, load_workbook
@@ -27,6 +28,7 @@ WORKBOOK_PATH = Path(os.environ.get("KPI_DATA_WORKBOOK", DEFAULT_WORKBOOK))
 REFRESH_MINUTES = max(1, int(os.environ.get("KPI_REFRESH_MINUTES", "1440")))
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("KPI_PORT", "8765"))
+ALLOWED_HOSTS = {"www.stats.gov.sa", "www.mof.gov.sa"}
 
 FACT_HEADERS = (
     "CountryCode",
@@ -166,13 +168,113 @@ def workbook_data(path: Path) -> dict[str, Any]:
 
 def download_bytes(url: str) -> bytes:
     parsed = urlparse(url)
-    if parsed.scheme != "https" or parsed.hostname != "www.stats.gov.sa":
-        raise ValueError("Live GASTAT extractors only allow HTTPS URLs on www.stats.gov.sa.")
+    if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
+        raise ValueError("Live extractors only allow HTTPS URLs on www.stats.gov.sa and www.mof.gov.sa.")
     request = Request(url, headers={"User-Agent": "Saudi-KPI-Monitor/1.0"})
     with urlopen(request, timeout=45) as response:
         if response.status != 200:
             raise OSError(f"Source returned HTTP {response.status}: {url}")
         return response.read()
+
+
+def make_quarter_fact(
+    kpi_id: str, year: int, quarter: int, value: float, unit: str,
+    source_table: str, source_url: str, source_note: str,
+) -> dict[str, Any]:
+    first_month = 3 * quarter - 2
+    fact = make_fact(kpi_id, year, first_month, value, unit, source_table, source_url, source_note)
+    last_month = first_month + 2
+    fact["PeriodEnd"] = date(year, last_month, calendar.monthrange(year, last_month)[1]).isoformat()
+    fact["Month"] = None
+    fact["MonthName"] = f"Q{quarter}"
+    return fact
+
+
+MOF_CAPEX_LABEL = "non-financial assets (capex)"
+MOF_PERIOD_RE = re.compile(
+    r"Actual\s+expenditures?\s+(?:in|until)\s+(Q[1-4]|H1)\s+of\s+FY\s+(\d{4})", re.IGNORECASE
+)
+MOF_PERIOD_QUARTERS = {"Q1": 1, "H1": 2, "Q2": 2, "Q3": 3, "Q4": 4}
+
+
+def extract_mof_capex(content: bytes, source_url: str) -> list[dict[str, Any]]:
+    workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
+    try:
+        # The current report sheet carries a trailing space; unnamed-suffix copies are stale templates.
+        names = sorted(
+            (name for name in workbook.sheetnames if name.strip() == "Expenditures"),
+            key=lambda name: name == name.strip(),
+        )
+        if not names:
+            raise ValueError("MOF workbook has no Expenditures sheet.")
+        rows = list(workbook[names[0]].iter_rows(values_only=True))
+    finally:
+        workbook.close()
+    period = None
+    for row in rows[:8]:
+        for cell in row:
+            match = MOF_PERIOD_RE.search(cell) if isinstance(cell, str) else None
+            if match:
+                period = match
+                break
+        if period:
+            break
+    if not period:
+        raise ValueError("MOF workbook period title was not found.")
+    quarters = MOF_PERIOD_QUARTERS[period.group(1).upper()]
+    year = int(period.group(2))
+    values: list[float] | None = None
+    for row in rows:
+        if any(isinstance(cell, str) and cell.strip().lower() == MOF_CAPEX_LABEL for cell in row):
+            values = [float(c) for c in row if isinstance(c, (int, float)) and not isinstance(c, bool)]
+            break
+    if values is None:
+        raise ValueError("MOF CAPEX row was not found.")
+    if quarters == 1:
+        by_quarter = values[:1]
+    else:
+        by_quarter = values[1 : quarters + 1]
+        if len(by_quarter) != quarters or abs(sum(by_quarter) - values[0]) > 1:
+            raise ValueError("MOF CAPEX quarterly values do not reconcile with the cumulative total.")
+        by_quarter.reverse()
+    if len(by_quarter) != quarters:
+        raise ValueError("MOF CAPEX quarterly values are incomplete.")
+    return [
+        make_quarter_fact(
+            "KPI_16", year, quarter, value, "SAR million",
+            "MOF Quarterly Budget Performance Report - Expenditures: Non-financial Assets (CAPEX)",
+            source_url, "Actual quarterly government capital expenditure; quarter derived from the report's period columns.",
+        )
+        for quarter, value in enumerate(by_quarter, start=1)
+    ]
+
+
+def mof_report_urls(fetch) -> list[str]:
+    # Latest report workbook per fiscal year, discovered from the MOF year pages.
+    urls: list[str] = []
+    for year in range(2022, date.today().year + 1):
+        links: list[str] = []
+        for slug in (f"budget-performance-report-{year}-1", f"budget-performance-report-{year}"):
+            try:
+                html = fetch(f"https://www.mof.gov.sa/ar/w/{slug}").decode("utf-8", "replace")
+            except OSError:
+                continue
+            links = list(dict.fromkeys(re.findall(r"/documents/[^\"'\s<>]*\.xlsx[^\"'\s<>]*", html)))
+            if links:
+                break
+        if not links:
+            if year == date.today().year:
+                continue
+            raise ValueError(f"No MOF budget performance workbook found for {year}.")
+
+        def quarter_of(link: str) -> int:
+            name = unquote(link.split("/")[4]) if link.count("/") >= 4 else link
+            match = re.search(r"Q([1-4])", name)
+            return int(match.group(1)) if match else 0
+
+        best = max(links, key=quarter_of)
+        urls.append("https://www.mof.gov.sa" + best.replace("?download=true", "").replace("&amp;", "&"))
+    return urls
 
 
 def make_fact(
@@ -548,7 +650,18 @@ class MartService:
         except (OSError, ValueError, KeyError, IndexError) as error:
             errors["KPI_13"] = str(error)
 
-        replace_ids = {"KPI_05", "KPI_07", "KPI_08", "KPI_11", "KPI_12", "KPI_13"}
+        try:
+            capex: list[dict[str, Any]] = []
+            for report_url in mof_report_urls(download_bytes):
+                capex.extend(extract_mof_capex(download_bytes(report_url), report_url))
+            if not capex:
+                raise ValueError("No MOF capital expenditure observations were extracted.")
+            extracted["KPI_16"] = capex
+            notes["KPI_16"] = "Extracted from the latest MOF quarterly budget performance report of each fiscal year."
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            errors["KPI_16"] = str(error)
+
+        replace_ids = {"KPI_05", "KPI_07", "KPI_08", "KPI_11", "KPI_12", "KPI_13", "KPI_16"}
         successful = {
             kpi_id: rows for kpi_id, rows in extracted.items()
             if kpi_id in replace_ids and rows and kpi_id not in errors
@@ -669,10 +782,10 @@ class MartService:
             "lastError": last_error,
             "liveExtractionConfigured": True,
             "notice": (
-                "Scheduled refresh downloads and extracts configured official GASTAT Excel reports for "
-                "KPIs 05, 07, 08, 11, 12 and 13. It uses direct report URLs already present in the source "
-                "register and does not discover newer report links automatically. Other KPIs need verified "
-                "provider-specific connectors."
+                "Scheduled refresh downloads and extracts official Excel reports: GASTAT for KPIs 05, 07, 08, "
+                "11, 12 and 13 (fixed report URLs from the source register) and the Ministry of Finance quarterly "
+                "budget performance reports for KPI 16 (report links are discovered on the MOF year pages). "
+                "Other KPIs need verified provider-specific connectors."
             ),
             "factCount": len(facts),
         }
