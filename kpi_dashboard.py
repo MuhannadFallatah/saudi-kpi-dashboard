@@ -254,18 +254,21 @@ def mof_report_urls(fetch) -> list[str]:
     urls: list[str] = []
     for year in range(2022, date.today().year + 1):
         links: list[str] = []
+        last_problem = "no workbook links on the page"
         for slug in (f"budget-performance-report-{year}-1", f"budget-performance-report-{year}"):
             try:
                 html = fetch(f"https://www.mof.gov.sa/ar/w/{slug}").decode("utf-8", "replace")
-            except OSError:
+            except OSError as error:
+                last_problem = f"{slug}: {error}"
                 continue
             links = list(dict.fromkeys(re.findall(r"/documents/[^\"'\s<>]*\.xlsx[^\"'\s<>]*", html)))
             if links:
                 break
+            last_problem = f"{slug}: no workbook links in {len(html)} characters of HTML"
         if not links:
             if year == date.today().year:
                 continue
-            raise ValueError(f"No MOF budget performance workbook found for {year}.")
+            raise ValueError(f"No MOF budget performance workbook found for {year} ({last_problem}).")
 
         def quarter_of(link: str) -> int:
             name = unquote(link.split("/")[4]) if link.count("/") >= 4 else link
