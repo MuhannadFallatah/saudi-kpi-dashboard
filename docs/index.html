@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Saudi KPI Data Monitor</title>
+<style>
+:root{font-family:Segoe UI,Arial,sans-serif;color:#172337;background:#f3f6fb}
+*{box-sizing:border-box}body{margin:0}.top{background:#102844;color:#fff;padding:24px max(22px,calc((100vw - 1200px)/2))}
+.top h1{margin:0;font-size:25px}.top p{margin:8px 0 0;color:#cbd6e2}.wrap{max-width:1200px;margin:24px auto;padding:0 20px}
+.notice{background:#fff7df;border:1px solid #f0d58b;color:#624b08;border-radius:10px;padding:14px 16px;line-height:1.5}
+.toolbar{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0;align-items:center}.btn{border:0;border-radius:8px;padding:10px 14px;font-weight:650;background:#1670d2;color:#fff;text-decoration:none}
+.btn.secondary{background:#e8eef5;color:#18324f}.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0}
+.stat,.tablebox{background:#fff;border:1px solid #e1e8f0;border-radius:12px}.stat{padding:16px}.stat small{color:#66758a}.stat strong{display:block;font-size:23px;margin-top:6px}
+.tablebox{overflow:auto}table{width:100%;border-collapse:collapse;min-width:900px}th,td{text-align:left;padding:12px 13px;border-bottom:1px solid #edf1f5;vertical-align:top}
+th{font-size:12px;text-transform:uppercase;color:#65758a;background:#f8fafc;position:sticky;top:0}td{font-size:13px}
+.status{display:inline-flex;align-items:center;gap:7px;font-weight:700;white-space:nowrap}.dot{height:10px;width:10px;border-radius:50%;display:inline-block}
+.green .dot{background:#168344}.red .dot{background:#d53b3b}.muted,.foot{color:#758398}.muted{direction:rtl;display:inline-block}
+a{color:#1268ba}.foot{font-size:12px;margin:14px 2px;line-height:1.5}#message{margin-left:auto;color:#40536b}
+@media(max-width:700px){.stats{grid-template-columns:1fr}.top h1{font-size:21px}}
+</style>
+</head>
+<body>
+<header class="top"><h1>Saudi KPI Data Monitor</h1>
+<p>All 16 KPIs · scheduled refresh · Excel download · JSON data</p></header>
+<main class="wrap">
+<div id="notice" class="notice">Loading KPI data…</div>
+<div class="toolbar">
+<a class="btn" href="data/Saudi_KPI_Extract.xlsx">Download Excel</a>
+<a class="btn secondary" href="data/status.json">Status JSON</a>
+<a class="btn secondary" href="data/facts.json">Facts JSON</a>
+<span id="message"></span>
+</div>
+<section class="stats">
+<div class="stat"><small>KPIs tracked</small><strong id="kpiCount">—</strong></div>
+<div class="stat"><small>KPIs with observations</small><strong id="readyCount">—</strong></div>
+<div class="stat"><small>Fact observations</small><strong id="factCount">—</strong></div>
+</section>
+<div class="tablebox"><table><thead><tr>
+<th>Refresh status</th><th>KPI</th><th>Source</th><th>Frequency</th><th>Records</th><th>Latest data</th><th>Refresh details</th>
+</tr></thead><tbody id="rows"></tbody></table></div>
+<p class="foot">Green indicates a successful extraction from a configured source workbook. Red indicates a failed or unavailable connector, no loaded observations, or intentional exclusion. The report URLs are fixed and are not discovered automatically; verify the latest observation date. This GitHub Pages site is static: JSON is served as files, not through a live Python API. Scheduled refresh runs in GitHub Actions. The repository is private, but the site and its data downloads are public by authorization.</p>
+</main>
+<script>
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+async function load(){
+ const r=await fetch('data/status.json',{cache:'no-store'});
+ if(!r.ok)throw new Error('Status data not available (HTTP '+r.status+')');
+ const d=await r.json();
+ document.getElementById('notice').textContent=d.notice+' Last scheduled refresh: '+(d.lastRefresh||d.generatedAt||'not available')+'.';
+ document.getElementById('kpiCount').textContent=d.kpis.length;
+ document.getElementById('readyCount').textContent=d.kpis.filter(k=>k.observationCount>0).length;
+ document.getElementById('factCount').textContent=Number(d.factCount).toLocaleString();
+ document.getElementById('rows').innerHTML=d.kpis.map(k=>`<tr>
+ <td><span class="status ${esc(k.refreshStatus)}"><i class="dot"></i>${esc(k.refreshLabel)}</span></td>
+ <td><strong>${esc(k.id)}</strong><br>${esc(k.name)}<br><span class="muted" lang="ar">${esc(k.nameArabic)}</span></td>
+ <td>${k.sourceUrl?`<a href="${esc(k.sourceUrl)}" target="_blank" rel="noreferrer">${esc(k.source||'Source')}</a>`:esc(k.source||'Not specified')}</td>
+ <td>${esc(k.frequency)}</td><td>${Number(k.observationCount).toLocaleString()}</td>
+ <td>${esc(k.latestObservation||'—')}</td><td>${esc(k.refreshNote||k.extractionStatus||'No extraction details')}</td></tr>`).join('');
+}
+load().catch(e=>document.getElementById('notice').textContent=e.message);
+</script>
+</body>
+</html>
