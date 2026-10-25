@@ -17,6 +17,8 @@ from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
 from openpyxl import Workbook, load_workbook
+from openpyxl.utils import get_column_letter
+from openpyxl.worksheet.table import Table, TableStyleInfo
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -66,6 +68,24 @@ KPI_NAMES_EN = {
     "KPI_14": "Credit default swap (CDS) spreads",
     "KPI_15": "Tadawul All Share Index (TASI)",
     "KPI_16": "Government capital expenditure",
+}
+KPI_SHEET_SLUGS = {
+    "KPI_01": "PMI",
+    "KPI_02": "POS_Transactions",
+    "KPI_03": "Cement_Sales",
+    "KPI_04": "Private_Bank_Credit",
+    "KPI_05": "Total_Goods_Imports",
+    "KPI_06": "Private_Sector_Imports",
+    "KPI_07": "Capital_Imports",
+    "KPI_08": "NonOil_Exports",
+    "KPI_09": "SAIBOR",
+    "KPI_10": "Investment_Licences",
+    "KPI_11": "Oil_Exports",
+    "KPI_12": "Goods_Exports",
+    "KPI_13": "Building_Permits",
+    "KPI_14": "CDS_Spreads",
+    "KPI_15": "TASI",
+    "KPI_16": "Govt_Capex",
 }
 MONTHS = {
     name.lower(): number
@@ -668,54 +688,46 @@ class MartService:
         return self.workbook_path
 
     def export_bytes(self) -> bytes:
-        snapshot = self.snapshot()
         facts = self.facts_for()
         with self._lock:
             components = list(self._data.get("components", []))
             export_components = list(self._data.get("kpi08_components", []))
         workbook = Workbook()
-        status_sheet = workbook.active
-        status_sheet.title = "Refresh_Status"
-        status_sheet.append(
-            ["KPI_ID", "KPI", "Source", "Refresh status", "Observation count", "Latest observation", "Last checked", "Note"]
-        )
-        for item in snapshot["kpis"]:
-            status_sheet.append(
-                [
-                    item["id"], item["name"], item["source"], item["refreshLabel"],
-                    item["observationCount"], item["latestObservation"],
-                    item["lastChecked"], item["refreshNote"],
-                ]
-            )
-        fact_sheet = workbook.create_sheet("Fact_All")
-        fact_sheet.append(list(FACT_HEADERS))
-        for row in facts:
-            fact_sheet.append([row.get(header) for header in FACT_HEADERS])
-        if components:
-            bec_sheet = workbook.create_sheet("Fact_KPI07_BEC")
-            component_headers = list(components[0])
-            bec_sheet.append(component_headers)
-            for row in components:
-                bec_sheet.append([row.get(header) for header in component_headers])
-        if export_components:
-            export_sheet = workbook.create_sheet("KPI08_Components")
-            component_headers = list(export_components[0])
-            export_sheet.append(component_headers)
-            for row in export_components:
-                export_sheet.append([row.get(header) for header in component_headers])
-        for sheet in workbook.worksheets:
+        workbook.remove(workbook.active)
+        used_names: set[str] = set()
+
+        def add_table(sheet_name: str, rows: list[dict[str, Any]], headers: list[str]) -> None:
+            # Drop columns with no values; keep the core columns when there is no data.
+            populated = [h for h in headers if any(r.get(h) is not None for r in rows)]
+            columns = populated or headers[:13]
+            sheet = workbook.create_sheet(sheet_name)
+            sheet.append(columns)
+            for row in rows:
+                sheet.append([row.get(h) for h in columns])
+            if not rows:
+                sheet.append([None] * len(columns))
+            table_name = "tbl_" + sheet_name
+            assert table_name not in used_names
+            used_names.add(table_name)
+            table = Table(displayName=table_name, ref=f"A1:{get_column_letter(len(columns))}{max(sheet.max_row, 2)}")
+            table.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
+            sheet.add_table(table)
             sheet.freeze_panes = "A2"
-            sheet.auto_filter.ref = sheet.dimensions
-            sheet.sheet_view.showGridLines = False
-            for cell in sheet[1]:
-                font = copy(cell.font)
-                font.bold = True
-                font.color = "FFFFFF"
-                cell.font = font
-                fill = copy(cell.fill)
-                fill.fill_type = "solid"
-                fill.fgColor = "1F4E78"
-                cell.fill = fill
+            for index, column in enumerate(columns, start=1):
+                width = max([len(str(column))] + [len(str(r.get(column))) for r in rows[:200] if r.get(column) is not None])
+                sheet.column_dimensions[get_column_letter(index)].width = min(max(width + 2, 10), 60)
+
+        for kpi_id in KPI_NAMES_EN:
+            number = kpi_id.split("_")[1]
+            add_table(
+                f"KPI_{number}_{KPI_SHEET_SLUGS[kpi_id]}",
+                [r for r in facts if r["KPI_ID"] == kpi_id],
+                list(FACT_HEADERS),
+            )
+        if components:
+            add_table("KPI_07_BEC_Detail", components, list(components[0]))
+        if export_components:
+            add_table("KPI_08_Components", export_components, list(export_components[0]))
         buffer = BytesIO()
         workbook.save(buffer)
         return buffer.getvalue()
