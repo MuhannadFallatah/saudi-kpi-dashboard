@@ -1,4 +1,4 @@
-import json
+﻿import json
 import tempfile
 import threading
 import unittest
@@ -120,11 +120,15 @@ class MartServiceTests(unittest.TestCase):
         self.assertEqual(result["factCount"], 1)
         self.assertIsNotNone(self.service.snapshot()["lastRefresh"])
 
-    def test_excel_export_contains_status_and_fact_sheets(self) -> None:
-        workbook = load_workbook(BytesIO(self.service.export_bytes()), read_only=True, data_only=True)
-        self.assertIn("Refresh_Status", workbook.sheetnames)
-        self.assertIn("Fact_All", workbook.sheetnames)
-        self.assertEqual(workbook["Fact_All"].max_row, 2)
+    def test_excel_export_has_one_named_table_per_kpi(self) -> None:
+        workbook = load_workbook(BytesIO(self.service.export_bytes()), data_only=True)
+        kpi_sheets = [name for name in workbook.sheetnames if name.startswith("KPI_")]
+        self.assertEqual(len(kpi_sheets), 16)
+        self.assertNotIn("Refresh_Status", workbook.sheetnames)
+        self.assertNotIn("Fact_All", workbook.sheetnames)
+        sheet = workbook["KPI_05_Total_Goods_Imports"]
+        self.assertEqual(list(sheet.tables), ["tbl_KPI_05_Total_Goods_Imports"])
+        self.assertEqual(sheet.max_row, 2)
 
 
 class DashboardApiTests(unittest.TestCase):
@@ -175,8 +179,8 @@ class DashboardApiTests(unittest.TestCase):
             self.assertEqual(response.status, 200)
             self.assertIn("spreadsheetml", response.headers["Content-Type"])
             workbook = load_workbook(BytesIO(response.read()), read_only=True, data_only=True)
-        self.assertIn("Refresh_Status", workbook.sheetnames)
-        self.assertEqual(workbook["Fact_All"].max_row, 2)
+        self.assertIn("KPI_05_Total_Goods_Imports", workbook.sheetnames)
+        self.assertEqual(workbook["KPI_05_Total_Goods_Imports"].max_row, 2)
 
 
 if __name__ == "__main__":
