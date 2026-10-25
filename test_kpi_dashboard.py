@@ -10,7 +10,36 @@ from urllib.request import Request, urlopen
 
 from openpyxl import Workbook, load_workbook
 
-from kpi_dashboard import DashboardHandler, MartService
+from kpi_dashboard import DashboardHandler, MartService, extract_mof_capex
+
+
+def mof_workbook(title: str, capex_values: list[float]) -> bytes:
+    workbook = Workbook()
+    stale = workbook.active
+    stale.title = "Expenditures"
+    stale.append(["x", "Actual expenditures in Q1 of FY 2023"])
+    stale.append(["الأصول", 1.0, "Non-financial Assets (CAPEX)"])
+    sheet = workbook.create_sheet("Expenditures ")
+    sheet.append(["المصروفات", "Expenditures"])
+    sheet.append([None, title])
+    sheet.append(["الأصول", *capex_values, "Non-financial Assets (CAPEX)"])
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
+class MofCapexTests(unittest.TestCase):
+    def test_h1_report_yields_two_quarters_from_current_sheet(self) -> None:
+        rows = extract_mof_capex(
+            mof_workbook("Actual Expenditures in H1 of FY 2026", [89659.0, 46226.0, 43433.0]), "https://www.mof.gov.sa/x"
+        )
+        self.assertEqual([(r["PeriodStart"], r["Value"]) for r in rows],
+                         [("2026-01-01", 43433.0), ("2026-04-01", 46226.0)])
+        self.assertEqual(rows[1]["PeriodEnd"], "2026-06-30")
+
+    def test_unreconciled_totals_are_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            extract_mof_capex(mof_workbook("Actual expenditures until Q3 of FY 2024", [100.0, 1.0, 2.0, 3.0]), "u")
 
 
 def make_workbook(path: Path) -> None:
