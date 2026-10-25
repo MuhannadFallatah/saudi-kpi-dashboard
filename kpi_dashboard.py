@@ -7,6 +7,7 @@ import threading
 import time
 import calendar
 import re
+import ssl
 from copy import copy
 from io import BytesIO
 from datetime import date, datetime
@@ -166,12 +167,20 @@ def workbook_data(path: Path) -> dict[str, Any]:
     }
 
 
+def tls_context() -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    # www.mof.gov.sa omits its DigiCert intermediate certificate from the TLS handshake.
+    for pem in sorted((APP_DIR / "certs").glob("*.pem")):
+        context.load_verify_locations(cafile=str(pem))
+    return context
+
+
 def download_bytes(url: str) -> bytes:
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
         raise ValueError("Live extractors only allow HTTPS URLs on www.stats.gov.sa and www.mof.gov.sa.")
     request = Request(url, headers={"User-Agent": "Saudi-KPI-Monitor/1.0"})
-    with urlopen(request, timeout=45) as response:
+    with urlopen(request, timeout=45, context=tls_context()) as response:
         if response.status != 200:
             raise OSError(f"Source returned HTTP {response.status}: {url}")
         return response.read()
