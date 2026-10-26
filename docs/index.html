@@ -47,7 +47,7 @@ a{color:#1268ba}.foot{font-size:12px;margin:14px 2px;line-height:1.5}#message{ma
 function ksa(v){
  if(!v)return '—';
  const d=new Date(v);
- return isNaN(d)?String(v):d.toLocaleString('en-GB',{timeZone:'Asia/Riyadh',year:'numeric',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:false})+' (UTC+3)';
+ return isNaN(d)?String(v):d.toLocaleString('en-GB',{timeZone:'Asia/Riyadh',year:'numeric',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:true}).replace(/\b(am|pm)\b/i,m=>m.toUpperCase());
 }
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
 async function load(){
@@ -65,7 +65,7 @@ async function load(){
  <td><strong>${esc(k.id)}</strong><br>${esc(k.name)}<br><span class="muted" lang="ar">${esc(k.nameArabic)}</span></td>
  <td>${k.sourceUrl?`<a href="${esc(k.sourceUrl)}" target="_blank" rel="noreferrer">${esc(k.source||'Source')}</a>`:esc(k.source||'Not specified')}</td>
  <td>${esc(k.frequency)}</td><td>${Number(k.observationCount).toLocaleString()}</td>
- <td>${esc(k.latestObservation||'—')}</td><td>${esc(ksa(k.lastChecked||last))}</td><td>${esc(k.refreshNote||k.extractionStatus||'No extraction details')}</td></tr>`).join('');
+ <td>${esc(k.latestObservation||'—')}</td><td>${k.refreshStatus==='green'?esc(ksa(k.lastChecked||last)):''}</td><td>${esc(k.refreshNote||k.extractionStatus||'No extraction details')}</td></tr>`).join('');
 }
 load().catch(e=>document.getElementById('notice').textContent=e.message);
 
