@@ -1,0 +1,122 @@
+{
+  "info": {
+    "name": "Saudi KPI Data Monitor API",
+    "description": "Static JSON/XLSX endpoints published on GitHub Pages. Read-only GET requests, no authentication. Data is regenerated hourly by GitHub Actions.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://muhannadfallatah.github.io/saudi-kpi-dashboard" },
+    { "key": "kpiId", "value": "KPI_05" }
+  ],
+  "item": [
+    {
+      "name": "Facts by KPI (filter)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Accept", "value": "application/json" }],
+        "url": { "raw": "{{baseUrl}}/data/kpi/{{kpiId}}.json", "host": ["{{baseUrl}}"], "path": ["data", "kpi", "{{kpiId}}.json"] },
+        "description": "Change the kpiId collection variable (KPI_01 ... KPI_16)."
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "const d = pm.response.json();",
+            "const id = pm.collectionVariables.get('kpiId');",
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('KPI matches requested id', () => pm.expect(d.kpi.id).to.eql(id));",
+            "pm.test('count equals data length', () => pm.expect(d.count).to.eql(d.data.length));",
+            "pm.test('Every row belongs to the KPI', () => d.data.forEach(r => pm.expect(r.KPI_ID).to.eql(id)));"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "KPI index",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Accept", "value": "application/json" }],
+        "url": { "raw": "{{baseUrl}}/data/kpi/index.json", "host": ["{{baseUrl}}"], "path": ["data", "kpi", "index.json"] }
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('16 KPIs listed', () => pm.expect(d.length).to.eql(16));"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "Status (all KPIs)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Accept", "value": "application/json" }],
+        "url": { "raw": "{{baseUrl}}/data/status.json", "host": ["{{baseUrl}}"], "path": ["data", "status.json"] }
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('16 KPIs returned', () => pm.expect(d.kpis.length).to.eql(16));",
+            "pm.test('lastRefresh is Riyadh time (+03:00)', () => pm.expect(d.lastRefresh).to.match(/\\+03:00$/));",
+            "pm.test('factCount matches', () => pm.expect(d.factCount).to.be.above(0));",
+            "pm.test('Every KPI has a status', () => d.kpis.forEach(k => pm.expect(['green','red']).to.include(k.refreshStatus)));",
+            "console.log('Green KPIs: ' + d.kpis.filter(k => k.refreshStatus === 'green').map(k => k.id).join(', '));"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "Facts (all observations)",
+      "request": {
+        "method": "GET",
+        "header": [{ "key": "Accept", "value": "application/json" }],
+        "url": { "raw": "{{baseUrl}}/data/facts.json", "host": ["{{baseUrl}}"], "path": ["data", "facts.json"] }
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "const d = pm.response.json();",
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('count equals data length', () => pm.expect(d.count).to.eql(d.data.length));",
+            "pm.test('Rows have KPI_ID, Year and Value', () => {",
+            "  const r = d.data[0];",
+            "  pm.expect(r).to.have.property('KPI_ID');",
+            "  pm.expect(r).to.have.property('Year');",
+            "  pm.expect(r).to.have.property('Value');",
+            "});",
+            "pm.test('Response time under 5s', () => pm.expect(pm.response.responseTime).to.be.below(5000));"
+          ]
+        }
+      }]
+    },
+    {
+      "name": "Excel download (one table per KPI)",
+      "request": {
+        "method": "GET",
+        "url": { "raw": "{{baseUrl}}/data/Saudi_KPI_Extract.xlsx", "host": ["{{baseUrl}}"], "path": ["data", "Saudi_KPI_Extract.xlsx"] }
+      },
+      "event": [{
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": [
+            "pm.test('Status 200', () => pm.response.to.have.status(200));",
+            "pm.test('Content-Type is xlsx', () => pm.expect(pm.response.headers.get('Content-Type')).to.include('spreadsheetml'));",
+            "pm.test('File is not empty', () => pm.expect(Number(pm.response.headers.get('Content-Length') || pm.response.size().body)).to.be.above(1000));"
+          ]
+        }
+      }]
+    }
+  ]
+}
