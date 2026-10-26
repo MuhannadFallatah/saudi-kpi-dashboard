@@ -27,8 +27,7 @@ a{color:#1268ba}.foot{font-size:12px;margin:14px 2px;line-height:1.5}#message{ma
 <div id="notice" class="notice">Loading KPI data…</div>
 <div class="toolbar">
 <a class="btn" href="data/Saudi_KPI_Extract.xlsx">Download Excel</a>
-<button class="btn" id="refreshBtn" type="button" title="Runs the refresh in GitHub Actions and reloads this page's data when it finishes">Refresh now</button>
-<button class="btn secondary" id="forgetBtn" type="button" hidden>Forget token</button>
+<button class="btn" id="refreshBtn" type="button" title="Loads the latest published data into this page">Reload latest data</button>
 <a class="btn secondary" href="data/status.json">Status JSON</a>
 <a class="btn secondary" href="data/facts.json">Facts JSON</a>
 <span id="message"></span>
@@ -41,7 +40,7 @@ a{color:#1268ba}.foot{font-size:12px;margin:14px 2px;line-height:1.5}#message{ma
 <div class="tablebox"><table><thead><tr>
 <th>Refresh status</th><th>KPI</th><th>Source</th><th>Frequency</th><th>Records</th><th>Latest data</th><th>Refresh details</th>
 </tr></thead><tbody id="rows"></tbody></table></div>
-<p class="foot">Green indicates a successful extraction from a configured source workbook. Red indicates a failed or unavailable connector, no loaded observations, or intentional exclusion. The report URLs for GASTAT are fixed; MOF report links are discovered automatically; verify the latest observation date. This GitHub Pages site is static: JSON is served as files, not through a live Python API. Scheduled refresh runs in GitHub Actions at 00:00 Riyadh time; "Refresh now" starts the GitHub Actions run from this page using a fine-grained token (Actions: read and write, this repository only) that the owner enters once; it is kept only in that browser. Anyone else sees the button fail with an authorization error. The repository and the site are public.</p>
+<p class="foot">Green indicates a successful extraction from a configured source workbook. Red indicates a failed or unavailable connector, no loaded observations, or intentional exclusion. The report URLs for GASTAT are fixed; MOF report links are discovered automatically; verify the latest observation date. This GitHub Pages site is static: JSON is served as files, not through a live Python API. Source extraction runs automatically in GitHub Actions every hour; this page reloads the latest published data every 5 minutes and when you click "Reload latest data". The repository and the site are public.</p>
 </main>
 <script>
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -62,44 +61,14 @@ async function load(){
 }
 load().catch(e=>document.getElementById('notice').textContent=e.message);
 
-const API='https://api.github.com/repos/MuhannadFallatah/saudi-kpi-dashboard';
-const TOKEN_KEY='kpiRefreshToken';
-const msg=t=>document.getElementById('message').textContent=t;
-const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-const gh=(path,opts={})=>fetch(API+path,{...opts,headers:{Accept:'application/vnd.github+json','Authorization':'Bearer '+localStorage.getItem(TOKEN_KEY),...(opts.headers||{})}});
-function syncForget(){document.getElementById('forgetBtn').hidden=!localStorage.getItem(TOKEN_KEY)}
-document.getElementById('forgetBtn').onclick=()=>{localStorage.removeItem(TOKEN_KEY);syncForget();msg('Token removed from this browser.')};
 document.getElementById('refreshBtn').onclick=async function(){
- const btn=this;
- if(!localStorage.getItem(TOKEN_KEY)){
-  const t=prompt('Paste a GitHub fine-grained token for MuhannadFallatah/saudi-kpi-dashboard with Actions: Read and write. It is stored only in this browser.');
-  if(!t)return;
-  localStorage.setItem(TOKEN_KEY,t.trim());syncForget();
- }
- btn.disabled=true;
- try{
-  const started=Date.now();
-  msg('Starting refresh…');
-  const res=await gh('/actions/workflows/publish.yml/dispatches',{method:'POST',body:JSON.stringify({ref:'main'})});
-  if(res.status===401||res.status===403||res.status===404){localStorage.removeItem(TOKEN_KEY);syncForget();throw new Error('Token rejected (HTTP '+res.status+'). Click Refresh now to enter a valid token.')}
-  if(res.status!==204)throw new Error('GitHub returned HTTP '+res.status);
-  for(let i=0;i<60;i++){
-   await sleep(8000);
-   const runs=await (await gh('/actions/workflows/publish.yml/runs?event=workflow_dispatch&per_page=1')).json();
-   const run=(runs.workflow_runs||[])[0];
-   if(!run||new Date(run.created_at).getTime()<started-60000){msg('Waiting for the run to start…');continue}
-   if(run.status!=='completed'){msg('Refreshing… ('+run.status+', '+Math.round((Date.now()-started)/1000)+'s)');continue}
-   if(run.conclusion!=='success')throw new Error('Refresh run finished with: '+run.conclusion);
-   msg('Run complete. Waiting for the site to publish…');
-   const before=document.getElementById('notice').textContent;
-   for(let j=0;j<15;j++){await sleep(6000);await load();if(document.getElementById('notice').textContent!==before)break}
-   msg('Refreshed at '+new Date().toLocaleTimeString()+'.');
-   return;
-  }
-  throw new Error('Timed out waiting for the refresh to finish.');
- }catch(e){msg(e.message)}finally{btn.disabled=false}
+ const btn=this,msg=document.getElementById('message');
+ btn.disabled=true;msg.textContent='Loading…';
+ try{await load();msg.textContent='Data reloaded at '+new Date().toLocaleTimeString()+'.'}
+ catch(e){msg.textContent=e.message}
+ finally{btn.disabled=false}
 };
-syncForget();
+setInterval(()=>load().catch(()=>{}),5*60*1000);
 </script>
 </body>
 </html>
