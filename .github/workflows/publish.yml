@@ -3,7 +3,7 @@ name: Refresh and publish Saudi KPI dashboard
 on:
   workflow_dispatch:
   schedule:
-    - cron: "0 21 * * *"
+    - cron: "7 * * * *"
   push:
     branches: [main]
     paths:
