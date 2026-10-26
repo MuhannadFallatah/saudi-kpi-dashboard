@@ -47,6 +47,27 @@ def main() -> None:
     write_json(DATA / "status.json", status)
     write_json(DATA / "facts.json", {"count": snapshot["factCount"], "data": service.facts_for()})
 
+    kpi_dir = DATA / "kpi"
+    kpi_dir.mkdir(exist_ok=True)
+    for old in kpi_dir.glob("*.json"):
+        old.unlink()
+    for kpi in snapshot["kpis"]:
+        rows = service.facts_for(kpi["id"])
+        write_json(kpi_dir / f"{kpi['id']}.json", {"kpi": kpi, "count": len(rows), "data": rows})
+    write_json(
+        kpi_dir / "index.json",
+        [
+            {
+                "id": kpi["id"],
+                "name": kpi["name"],
+                "refreshStatus": kpi["refreshStatus"],
+                "observationCount": kpi["observationCount"],
+                "url": f"{kpi['id']}.json",
+            }
+            for kpi in snapshot["kpis"]
+        ],
+    )
+
     excel_path = DATA / "Saudi_KPI_Extract.xlsx"
     excel_temp = excel_path.with_suffix(".xlsx.tmp")
     excel_temp.write_bytes(service.export_bytes())
