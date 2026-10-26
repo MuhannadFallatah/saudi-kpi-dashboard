@@ -6,7 +6,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 
-from kpi_dashboard import MartService, WORKBOOK_PATH
+from kpi_dashboard import MartService, RIYADH_TZ, WORKBOOK_PATH
 
 
 ROOT = Path(__file__).resolve().parent
@@ -32,7 +32,7 @@ def main() -> None:
         raise RuntimeError(result["message"])
 
     snapshot = service.snapshot()
-    generated_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    generated_at = datetime.now(RIYADH_TZ).isoformat(timespec="seconds")
     status = {
         **snapshot,
         "generatedAt": generated_at,
