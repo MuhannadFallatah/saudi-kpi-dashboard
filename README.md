@@ -19,7 +19,7 @@ repository.
 3. In repository **Settings → Pages**, set the build/deployment source to
    **GitHub Actions**.
 4. Run **Actions → Refresh and publish Saudi KPI dashboard → Run workflow**.
-5. The workflow refreshes daily at 21:00 UTC (00:00 Riyadh time). It can also be run manually.
+5. The workflow refreshes every hour (at minute 07 UTC). It can also be run manually from the Actions tab.
 
 The scheduled workflow publishes the report files and dashboard as a static
 site. It cannot discover newly released GASTAT report URLs; update the source
