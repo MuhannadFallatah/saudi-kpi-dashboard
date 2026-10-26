@@ -10,7 +10,9 @@ import re
 import ssl
 from copy import copy
 from io import BytesIO
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
+
+RIYADH_TZ = timezone(timedelta(hours=3), "Asia/Riyadh")
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -548,7 +550,7 @@ class MartService:
         started = time.monotonic()
         try:
             data = workbook_data(self.workbook_path)
-            timestamp = datetime.now().astimezone().isoformat(timespec="seconds")
+            timestamp = datetime.now(RIYADH_TZ).isoformat(timespec="seconds")
             with self._lock:
                 self._data = data
                 self._last_refresh = timestamp
@@ -573,10 +575,9 @@ class MartService:
                         "note": "Live provider extraction has not run yet.",
                         "checkedAt": timestamp,
                     }
-                self._next_refresh = datetime.now().astimezone().timestamp()
-                self._next_refresh = datetime.fromtimestamp(
-                    self._next_refresh + self.refresh_minutes * 60
-                ).astimezone().isoformat(timespec="seconds")
+                self._next_refresh = (
+                    datetime.now(RIYADH_TZ) + timedelta(minutes=self.refresh_minutes)
+                ).isoformat(timespec="seconds")
             if live:
                 self._extract_live_sources(timestamp)
             return {
