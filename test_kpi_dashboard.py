@@ -14,6 +14,7 @@ from kpi_dashboard import (
     DashboardHandler,
     MartService,
     extract_datasaudi_pmi,
+    extract_datasaudi_private_lending,
     extract_mof_capex,
     extract_sama_pos_text,
     extract_yamama_cement,
@@ -74,6 +75,35 @@ class DataSaudiPmiTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "incomplete"):
             extract_datasaudi_pmi(json.dumps(payload).encode("utf-8"))
+
+
+class DataSaudiPrivateLendingTests(unittest.TestCase):
+    def test_extracts_only_monthly_grand_total(self) -> None:
+        payload = {
+            "page": {"total": 4},
+            "columns": ["Month", "Lending Type", "Million SAR"],
+            "data": [
+                {"Month": "2026-08", "Lending Type": "Loans, Advances & Overdrafts", "Million SAR": 3165439.25},
+                {"Month": "2026-08", "Lending Type": "Bills Discounted", "Million SAR": 22006.04},
+                {"Month": "2026-08", "Lending Type": "Investments in Private Securities", "Million SAR": 109217.17},
+                {"Month": "2026-08", "Lending Type": "Grand Total", "Million SAR": 3296662.5},
+            ],
+        }
+        rows = extract_datasaudi_private_lending(json.dumps(payload).encode("utf-8"))
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["KPI_ID"], "KPI_04")
+        self.assertEqual(rows[0]["PeriodStart"], "2026-08-01")
+        self.assertEqual(rows[0]["Value"], 3296662.5)
+        self.assertEqual(rows[0]["Unit"], "SAR million")
+
+    def test_rejects_incomplete_response(self) -> None:
+        payload = {
+            "page": {"total": 2},
+            "columns": ["Month", "Lending Type", "Million SAR"],
+            "data": [{"Month": "2026-08", "Lending Type": "Grand Total", "Million SAR": 10}],
+        }
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            extract_datasaudi_private_lending(json.dumps(payload).encode("utf-8"))
 
 
 class SamaPosTests(unittest.TestCase):

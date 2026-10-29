@@ -34,8 +34,10 @@ endpoint, attributed by DataSaudi to Riyad Bank and linked to the S&P Global
 PMI release archive), KPI 02 (SAMA weekly POS report PDFs; transaction count
 and transaction value are stored as separate fact rows), KPI 03 (Yamama
 Cement's monthly company sales table, summed across companies; Argaam's Saudi
-market report is used as a cross-check), KPIs 05, 07, 08, 11, 12 and 13
-(GASTAT workbooks, fixed URLs), and KPI 16 (Ministry of Finance quarterly
+market report is used as a cross-check), and KPI 04 (DataSaudi's monthly
+Grand Total of banks' claims on the private sector, sourced to SAMA).
+KPIs 05, 07, 08, 11, 12 and 13 use GASTAT workbooks (fixed URLs), and KPI 16
+uses Ministry of Finance quarterly
 budget performance reports, "Non-financial Assets (CAPEX)", quarterly from
 2022; the latest report per fiscal year is discovered from the MOF year
 pages).
@@ -46,7 +48,9 @@ unavailable connector, no data, or intentional exclusion. Check observation
 dates; success does not imply that the source has published a newer period.
 DataSaudi's PMI feed provides monthly values from August 2009. Confirm
 redistribution terms with the source owners before sharing the series with
-external systems. Yamama's report currently provides monthly sales history
+external systems. DataSaudi's private-sector bank-claims series is monthly,
+reported in SAR million, and includes the Grand Total and component rows; the
+extractor uses only the Grand Total. Yamama's report currently provides monthly sales history
 from January 2010; the September 2026 total of 4,439 thousand tonnes matches
 the Argaam Saudi-wide report. SAMA's POS page currently lists the latest 10 weekly PDFs;
 each report covers four weeks, so the POS extraction provides a rolling,

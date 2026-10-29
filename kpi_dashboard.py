@@ -48,6 +48,11 @@ DATASAUDI_PMI_URL = (
     "?cube=pmi&drilldowns=Month&measures=Purchasing+Manager+Index"
 )
 DATASAUDI_PMI_PAGE = "https://datasaudi.sa/en/#purchasing-manager-index"
+DATASAUDI_PRIVATE_LENDING_URL = (
+    "https://api.datasaudi.sa/tesseract/data.jsonrecords"
+    "?cube=lending_private_sector&drilldowns=Lending+Type%2CMonth&measures=Million+SAR&locale=en"
+)
+DATASAUDI_PRIVATE_LENDING_PAGE = "https://datasaudi.sa/ar/#lending-to-the-private-sector"
 SAMA_POS_PAGE = "https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/POS.aspx"
 YAMAMA_CEMENT_URL = "https://www.yamamacement.com/ar/Reports/FullReport"
 ARGAAM_CEMENT_REFERENCE_URL = "https://www.argaam.com/ar/financial-reports/cement-monthly-report/2026/66"
@@ -407,6 +412,57 @@ def extract_datasaudi_pmi(content: bytes) -> list[dict[str, Any]]:
             )
         )
     return sorted(rows, key=lambda row: row["PeriodStart"])
+
+
+def extract_datasaudi_private_lending(content: bytes) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(content)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("DataSaudi private lending response is not valid JSON.") from error
+    if not isinstance(payload, dict):
+        raise ValueError("DataSaudi private lending response must be a JSON object.")
+
+    required_columns = {"Month", "Lending Type", "Million SAR"}
+    columns = payload.get("columns")
+    data = payload.get("data")
+    page = payload.get("page")
+    total = page.get("total") if isinstance(page, dict) else None
+    if not isinstance(columns, list) or not required_columns.issubset(columns):
+        raise ValueError("DataSaudi private lending response is missing expected data columns.")
+    if not isinstance(data, list) or not data:
+        raise ValueError("DataSaudi private lending response contains no monthly observations.")
+    if not isinstance(total, int) or total != len(data):
+        raise ValueError("DataSaudi private lending response is incomplete or has an invalid total.")
+
+    rows_by_period: dict[str, dict[str, Any]] = {}
+    for item in data:
+        if not isinstance(item, dict):
+            raise ValueError("DataSaudi private lending response contains an invalid observation.")
+        if item.get("Lending Type") != "Grand Total":
+            continue
+        period = item.get("Month")
+        value = item.get("Million SAR")
+        if not isinstance(period, str) or not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", period):
+            raise ValueError(f"DataSaudi private lending response has an invalid month: {period!r}.")
+        if period in rows_by_period:
+            raise ValueError(f"DataSaudi private lending response repeats total for {period}.")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            raise ValueError(f"DataSaudi private lending response has an invalid total for {period}.")
+        year, month = (int(part) for part in period.split("-"))
+        rows_by_period[period] = make_fact(
+            "KPI_04",
+            year,
+            month,
+            value,
+            "SAR million",
+            "Banks' Claims on Private Sector - Grand Total (DataSaudi/SAMA)",
+            DATASAUDI_PRIVATE_LENDING_PAGE,
+            "Monthly grand total of banks' claims on the private sector, from DataSaudi's series sourced "
+            "to Saudi Central Bank (SAMA). Grand Total is used directly; lending components are not added again.",
+        )
+    if not rows_by_period:
+        raise ValueError("DataSaudi private lending response contains no Grand Total observations.")
+    return [rows_by_period[period] for period in sorted(rows_by_period)]
 
 
 def sama_pos_report_urls(fetch) -> list[str]:
@@ -915,6 +971,17 @@ class MartService:
             errors["KPI_01"] = str(error)
 
         try:
+            extracted["KPI_04"] = extract_datasaudi_private_lending(
+                fetch(DATASAUDI_PRIVATE_LENDING_URL)
+            )
+            notes["KPI_04"] = (
+                "Extracted DataSaudi's monthly Grand Total for banks' claims on the private sector, "
+                "sourced to SAMA; unit is SAR million."
+            )
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            errors["KPI_04"] = str(error)
+
+        try:
             pos_facts: dict[tuple[str, str], dict[str, Any]] = {}
             for report_url in sama_pos_report_urls(fetch):
                 for fact in extract_sama_pos_pdf(fetch(report_url), report_url):
@@ -995,7 +1062,8 @@ class MartService:
             errors["KPI_16"] = str(error)
 
         replace_ids = {
-            "KPI_01", "KPI_02", "KPI_03", "KPI_05", "KPI_07", "KPI_08", "KPI_11", "KPI_12", "KPI_13", "KPI_16"
+            "KPI_01", "KPI_02", "KPI_03", "KPI_04", "KPI_05", "KPI_07", "KPI_08",
+            "KPI_11", "KPI_12", "KPI_13", "KPI_16"
         }
         successful = {
             kpi_id: rows for kpi_id, rows in extracted.items()
@@ -1105,7 +1173,7 @@ class MartService:
                     "observedTo": source.get("ObservedTo"),
                     "sourceAccessStatus": source.get("ExtractionStatus"),
                     "liveExtractionConfigured": kpi_id in {
-                        "KPI_01", "KPI_02", "KPI_03", "KPI_05", "KPI_07", "KPI_08",
+                        "KPI_01", "KPI_02", "KPI_03", "KPI_04", "KPI_05", "KPI_07", "KPI_08",
                         "KPI_11", "KPI_12", "KPI_13", "KPI_16"
                     },
                 }
@@ -1120,8 +1188,9 @@ class MartService:
             "lastError": last_error,
             "liveExtractionConfigured": True,
             "notice": (
-                "Scheduled refresh extracts the DataSaudi PMI monthly series for KPI 01, SAMA weekly POS reports "
-                "for KPI 02, and Yamama Cement monthly sales for KPI 03; it downloads official Excel reports "
+                "Scheduled refresh extracts DataSaudi's PMI series for KPI 01 and private-sector bank claims "
+                "for KPI 04, SAMA weekly POS reports for KPI 02, and Yamama Cement monthly sales for KPI 03; "
+                "it downloads official Excel reports "
                 "from GASTAT for KPIs 05, 07, 08, "
                 "11, 12 and 13 (fixed report URLs from the source register) and the Ministry of Finance quarterly "
                 "budget performance reports for KPI 16 (report links are discovered on the MOF year pages). "
