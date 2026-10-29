@@ -792,7 +792,8 @@ class MartService:
             )
             notes["KPI_02"] = (
                 "Extracted the weekly total transaction count and value from SAMA POS reports; "
-                "both measures are retained as separate observations."
+                "both measures are retained as separate observations. "
+                "Source page: https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/POS.aspx"
             )
         except (OSError, ValueError, KeyError, IndexError) as error:
             errors["KPI_02"] = str(error)
