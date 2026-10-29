@@ -31,7 +31,12 @@ WORKBOOK_PATH = Path(os.environ.get("KPI_DATA_WORKBOOK", DEFAULT_WORKBOOK))
 REFRESH_MINUTES = max(1, int(os.environ.get("KPI_REFRESH_MINUTES", "1440")))
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("KPI_PORT", "8765"))
-ALLOWED_HOSTS = {"www.stats.gov.sa", "www.mof.gov.sa"}
+ALLOWED_HOSTS = {"www.stats.gov.sa", "www.mof.gov.sa", "api.datasaudi.sa"}
+DATASAUDI_PMI_URL = (
+    "https://api.datasaudi.sa/tesseract/data.jsonrecords"
+    "?cube=pmi&drilldowns=Month&measures=Purchasing+Manager+Index"
+)
+DATASAUDI_PMI_PAGE = "https://datasaudi.sa/en/#purchasing-manager-index"
 
 FACT_HEADERS = (
     "CountryCode",
@@ -180,7 +185,7 @@ def tls_context() -> ssl.SSLContext:
 def download_bytes(url: str) -> bytes:
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
-        raise ValueError("Live extractors only allow HTTPS URLs on www.stats.gov.sa and www.mof.gov.sa.")
+        raise ValueError("Live extractors only allow HTTPS URLs on approved source hosts.")
     request = Request(url, headers={"User-Agent": "Saudi-KPI-Monitor/1.0"})
     with urlopen(request, timeout=45, context=tls_context()) as response:
         if response.status != 200:
@@ -326,6 +331,61 @@ def make_fact(
         "TurnoverSAR": None,
         "TradeCount": None,
     }
+
+
+def extract_datasaudi_pmi(content: bytes) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(content)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("DataSaudi PMI response is not valid JSON.") from error
+
+    if not isinstance(payload, dict):
+        raise ValueError("DataSaudi PMI response must be a JSON object.")
+
+    expected_measure = "Purchasing Manager Index"
+    columns = payload.get("columns")
+    data = payload.get("data")
+    page = payload.get("page")
+    total = page.get("total") if isinstance(page, dict) else None
+    if not isinstance(columns, list) or expected_measure not in columns:
+        raise ValueError("DataSaudi PMI response is missing the expected measure column.")
+    if not isinstance(data, list) or not data:
+        raise ValueError("DataSaudi PMI response contains no monthly observations.")
+    if not isinstance(total, int) or total != len(data):
+        raise ValueError("DataSaudi PMI response is incomplete or has an invalid total.")
+
+    note = (
+        "Retrieved from DataSaudi's public PMI monthly data endpoint. DataSaudi attributes "
+        "the series to Riyad Bank and links the S&P Global PMI release archive."
+    )
+    rows = []
+    seen_periods: set[str] = set()
+    for item in data:
+        if not isinstance(item, dict):
+            raise ValueError("DataSaudi PMI response contains an invalid observation.")
+        period = item.get("Month")
+        value = item.get(expected_measure)
+        if not isinstance(period, str) or not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", period):
+            raise ValueError(f"DataSaudi PMI response has an invalid month: {period!r}.")
+        if period in seen_periods:
+            raise ValueError(f"DataSaudi PMI response repeats month {period}.")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 <= value <= 100:
+            raise ValueError(f"DataSaudi PMI response has an invalid value for {period}.")
+        seen_periods.add(period)
+        year, month = (int(part) for part in period.split("-"))
+        rows.append(
+            make_fact(
+                "KPI_01",
+                year,
+                month,
+                value,
+                "index points",
+                "Purchasing Managers' Index - Monthly (DataSaudi)",
+                DATASAUDI_PMI_PAGE,
+                note,
+            )
+        )
+    return sorted(rows, key=lambda row: row["PeriodStart"])
 
 
 def monthly_rows(sheet, year_index: int, month_index: int):
@@ -587,7 +647,7 @@ class MartService:
                 "factCount": len(self._data["facts"]),
                 "durationSeconds": round(time.monotonic() - started, 3),
                 "message": (
-                    "Workbook loaded and configured GASTAT reports were fetched."
+                    "DataSaudi PMI data, configured GASTAT reports, and MOF reports were fetched."
                     if live
                     else "Workbook loaded; no new provider values were fetched."
                 ),
@@ -620,6 +680,15 @@ class MartService:
             if url not in downloaded:
                 downloaded[url] = download_bytes(url)
             return downloaded[url]
+
+        try:
+            extracted["KPI_01"] = extract_datasaudi_pmi(fetch(DATASAUDI_PMI_URL))
+            notes["KPI_01"] = (
+                "Extracted from DataSaudi's public PMI monthly data endpoint; the series is attributed "
+                "to Riyad Bank and links the S&P Global PMI release archive."
+            )
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            errors["KPI_01"] = str(error)
 
         main_url = source_url["KPI_05"]
         extracted_components: list[dict[str, Any]] = []
@@ -674,7 +743,7 @@ class MartService:
         except (OSError, ValueError, KeyError, IndexError) as error:
             errors["KPI_16"] = str(error)
 
-        replace_ids = {"KPI_05", "KPI_07", "KPI_08", "KPI_11", "KPI_12", "KPI_13", "KPI_16"}
+        replace_ids = {"KPI_01", "KPI_05", "KPI_07", "KPI_08", "KPI_11", "KPI_12", "KPI_13", "KPI_16"}
         successful = {
             kpi_id: rows for kpi_id, rows in extracted.items()
             if kpi_id in replace_ids and rows and kpi_id not in errors
@@ -782,7 +851,9 @@ class MartService:
                     "observedFrom": source.get("ObservedFrom"),
                     "observedTo": source.get("ObservedTo"),
                     "sourceAccessStatus": source.get("ExtractionStatus"),
-                    "liveExtractionConfigured": kpi_id in {"KPI_05", "KPI_07", "KPI_08", "KPI_11", "KPI_12", "KPI_13"},
+                    "liveExtractionConfigured": kpi_id in {
+                        "KPI_01", "KPI_05", "KPI_07", "KPI_08", "KPI_11", "KPI_12", "KPI_13", "KPI_16"
+                    },
                 }
             )
 
@@ -795,7 +866,8 @@ class MartService:
             "lastError": last_error,
             "liveExtractionConfigured": True,
             "notice": (
-                "Scheduled refresh downloads and extracts official Excel reports: GASTAT for KPIs 05, 07, 08, "
+                "Scheduled refresh extracts the DataSaudi PMI monthly series for KPI 01, downloads official Excel "
+                "reports from GASTAT for KPIs 05, 07, 08, "
                 "11, 12 and 13 (fixed report URLs from the source register) and the Ministry of Finance quarterly "
                 "budget performance reports for KPI 16 (report links are discovered on the MOF year pages). "
                 "Other KPIs need verified provider-specific connectors."

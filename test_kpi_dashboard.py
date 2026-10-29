@@ -10,7 +10,7 @@ from urllib.request import Request, urlopen
 
 from openpyxl import Workbook, load_workbook
 
-from kpi_dashboard import DashboardHandler, MartService, extract_mof_capex
+from kpi_dashboard import DashboardHandler, MartService, extract_datasaudi_pmi, extract_mof_capex
 
 
 def mof_workbook(title: str, capex_values: list[float]) -> bytes:
@@ -40,6 +40,32 @@ class MofCapexTests(unittest.TestCase):
     def test_unreconciled_totals_are_rejected(self) -> None:
         with self.assertRaises(ValueError):
             extract_mof_capex(mof_workbook("Actual expenditures until Q3 of FY 2024", [100.0, 1.0, 2.0, 3.0]), "u")
+
+
+class DataSaudiPmiTests(unittest.TestCase):
+    def test_extracts_monthly_pmi_facts(self) -> None:
+        payload = {
+            "page": {"total": 2},
+            "columns": ["Month ID", "Month", "Purchasing Manager Index"],
+            "data": [
+                {"Month ID": 202609, "Month": "2026-09", "Purchasing Manager Index": 55.26107857},
+                {"Month ID": 202608, "Month": "2026-08", "Purchasing Manager Index": 53.75571254},
+            ],
+        }
+        rows = extract_datasaudi_pmi(json.dumps(payload).encode("utf-8"))
+        self.assertEqual([row["PeriodStart"] for row in rows], ["2026-08-01", "2026-09-01"])
+        self.assertEqual(rows[-1]["Value"], 55.26107857)
+        self.assertEqual(rows[-1]["Unit"], "index points")
+        self.assertEqual(rows[-1]["SourceURL"], "https://datasaudi.sa/en/#purchasing-manager-index")
+
+    def test_rejects_incomplete_api_response(self) -> None:
+        payload = {
+            "page": {"total": 2},
+            "columns": ["Month", "Purchasing Manager Index"],
+            "data": [{"Month": "2026-09", "Purchasing Manager Index": 55.3}],
+        }
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            extract_datasaudi_pmi(json.dumps(payload).encode("utf-8"))
 
 
 def make_workbook(path: Path) -> None:
