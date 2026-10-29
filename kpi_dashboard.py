@@ -191,7 +191,14 @@ def download_bytes(url: str) -> bytes:
     parsed = urlparse(url)
     if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
         raise ValueError("Live extractors only allow HTTPS URLs on approved source hosts.")
-    request = Request(url, headers={"User-Agent": "Saudi-KPI-Monitor/1.0"})
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/pdf,application/json,*/*",
+        },
+    )
     with urlopen(request, timeout=45, context=tls_context()) as response:
         if response.status != 200:
             raise OSError(f"Source returned HTTP {response.status}: {url}")
@@ -397,10 +404,15 @@ def sama_pos_report_urls(fetch) -> list[str]:
     html = fetch(SAMA_POS_PAGE).decode("utf-8", "replace")
     html = html.replace(r"\u002f", "/")
     paths = re.findall(r'"FileRef"\s*:\s*"([^"]+\.pdf)"', html, flags=re.IGNORECASE)
-    paths = [path for path in paths if "/Statistics/Indices/POS_EN/" in path]
+    paths = [path for path in paths if "/statistics/indices/pos_en/" in path.lower()]
     urls = list(dict.fromkeys(urljoin(SAMA_POS_PAGE, path) for path in paths))
     if not urls:
-        raise ValueError("SAMA POS page did not contain any weekly report PDF links.")
+        title = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.IGNORECASE | re.DOTALL)
+        page_title = re.sub(r"\s+", " ", title.group(1)).strip() if title else "unavailable"
+        raise ValueError(
+            f"SAMA POS page did not contain weekly report PDF links "
+            f"(title={page_title!r}, response length={len(html)})."
+        )
     return urls[:10]
 
 
