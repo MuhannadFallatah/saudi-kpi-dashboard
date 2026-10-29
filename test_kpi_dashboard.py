@@ -16,6 +16,7 @@ from kpi_dashboard import (
     extract_datasaudi_pmi,
     extract_mof_capex,
     extract_sama_pos_text,
+    extract_yamama_cement,
     sama_pos_report_urls,
 )
 
@@ -103,6 +104,27 @@ class SamaPosTests(unittest.TestCase):
     def test_rejects_report_without_total_or_periods(self) -> None:
         with self.assertRaisesRegex(ValueError, "four weekly periods or total"):
             extract_sama_pos_text("Weekly Points of Sale Transactions", "u")
+
+
+class YamamaCementTests(unittest.TestCase):
+    def test_sums_company_sales_by_month(self) -> None:
+        rows = ['<table id="monthlySalesOfCementTable"><tr><th>Company</th><td>2026-سبتمبر</td><td>2026-أغسطس</td></tr>']
+        rows.extend(
+            f"<tr><th>Company {index}</th><td>100</td><td>90</td></tr>"
+            for index in range(10)
+        )
+        rows.append("</table>")
+        facts = extract_yamama_cement("".join(rows).encode("utf-8"), "https://yamama.example/report")
+        self.assertEqual(len(facts), 2)
+        self.assertEqual(facts[0]["PeriodStart"], "2026-08-01")
+        self.assertEqual(facts[0]["Value"], 900.0)
+        self.assertEqual(facts[1]["PeriodStart"], "2026-09-01")
+        self.assertEqual(facts[1]["Value"], 1000.0)
+        self.assertEqual(facts[1]["Unit"], "thousand tonnes")
+
+    def test_rejects_missing_company_sales_table(self) -> None:
+        with self.assertRaisesRegex(ValueError, "missing its monthly company sales table"):
+            extract_yamama_cement(b"<html></html>", "u")
 
 
 def make_workbook(path: Path) -> None:

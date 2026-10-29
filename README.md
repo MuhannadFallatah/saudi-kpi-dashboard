@@ -32,11 +32,13 @@ JSON endpoints are static files, and there is no POST refresh API.
 Automated sources currently cover KPI 01 (DataSaudi's public monthly PMI data
 endpoint, attributed by DataSaudi to Riyad Bank and linked to the S&P Global
 PMI release archive), KPI 02 (SAMA weekly POS report PDFs; transaction count
-and transaction value are stored as separate fact rows), KPIs 05, 07, 08, 11,
-12 and 13 (GASTAT workbooks, fixed URLs), and KPI 16 (Ministry of Finance
-quarterly budget performance reports, "Non-financial Assets (CAPEX)",
-quarterly from 2022; the latest report per fiscal year is discovered from the
-MOF year pages).
+and transaction value are stored as separate fact rows), KPI 03 (Yamama
+Cement's monthly company sales table, summed across companies; Argaam's Saudi
+market report is used as a cross-check), KPIs 05, 07, 08, 11, 12 and 13
+(GASTAT workbooks, fixed URLs), and KPI 16 (Ministry of Finance quarterly
+budget performance reports, "Non-financial Assets (CAPEX)", quarterly from
+2022; the latest report per fiscal year is discovered from the MOF year
+pages).
 Other KPIs appear in the status table as unavailable until their source routes
 and access are verified. KPI 10 (MISA) remains excluded by instruction.
 Green indicates a configured extraction succeeded; red indicates a failed or
@@ -44,7 +46,9 @@ unavailable connector, no data, or intentional exclusion. Check observation
 dates; success does not imply that the source has published a newer period.
 DataSaudi's PMI feed provides monthly values from August 2009. Confirm
 redistribution terms with the source owners before sharing the series with
-external systems. SAMA's POS page currently lists the latest 10 weekly PDFs;
+external systems. Yamama's report currently provides monthly sales history
+from January 2010; the September 2026 total of 4,439 thousand tonnes matches
+the Argaam Saudi-wide report. SAMA's POS page currently lists the latest 10 weekly PDFs;
 each report covers four weeks, so the POS extraction provides a rolling,
 overlap-deduplicated recent history rather than a complete historical series.
 SAMA reports both count (thousand transactions) and value (SAR thousand).

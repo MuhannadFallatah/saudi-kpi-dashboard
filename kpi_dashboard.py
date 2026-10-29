@@ -9,9 +9,10 @@ import calendar
 import re
 import ssl
 from copy import copy
+from html import unescape
 from io import BytesIO
 from datetime import date, datetime, timedelta, timezone
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urljoin
 
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
@@ -35,13 +36,21 @@ WORKBOOK_PATH = Path(os.environ.get("KPI_DATA_WORKBOOK", DEFAULT_WORKBOOK))
 REFRESH_MINUTES = max(1, int(os.environ.get("KPI_REFRESH_MINUTES", "1440")))
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("KPI_PORT", "8765"))
-ALLOWED_HOSTS = {"www.stats.gov.sa", "www.mof.gov.sa", "api.datasaudi.sa", "www.sama.gov.sa"}
+ALLOWED_HOSTS = {
+    "www.stats.gov.sa",
+    "www.mof.gov.sa",
+    "api.datasaudi.sa",
+    "www.sama.gov.sa",
+    "www.yamamacement.com",
+}
 DATASAUDI_PMI_URL = (
     "https://api.datasaudi.sa/tesseract/data.jsonrecords"
     "?cube=pmi&drilldowns=Month&measures=Purchasing+Manager+Index"
 )
 DATASAUDI_PMI_PAGE = "https://datasaudi.sa/en/#purchasing-manager-index"
 SAMA_POS_PAGE = "https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/POS.aspx"
+YAMAMA_CEMENT_URL = "https://www.yamamacement.com/ar/Reports/FullReport"
+ARGAAM_CEMENT_REFERENCE_URL = "https://www.argaam.com/ar/financial-reports/cement-monthly-report/2026/66"
 
 FACT_HEADERS = (
     "CountryCode",
@@ -479,6 +488,130 @@ def extract_sama_pos_text(text: str, source_url: str) -> list[dict[str, Any]]:
     return rows
 
 
+ARABIC_MONTHS = {
+    "يناير": 1,
+    "فبراير": 2,
+    "مارس": 3,
+    "ابريل": 4,
+    "أبريل": 4,
+    "مايو": 5,
+    "يونيو": 6,
+    "يونيه": 6,
+    "يوليو": 7,
+    "اغسطس": 8,
+    "أغسطس": 8,
+    "سبتمبر": 9,
+    "اكتوبر": 10,
+    "أكتوبر": 10,
+    "نوفمبر": 11,
+    "ديسمبر": 12,
+}
+
+
+def _html_table_cells(table_html: str) -> list[list[str]]:
+    rows = re.findall(r"<tr\b[^>]*>(.*?)</tr>", table_html, flags=re.IGNORECASE | re.DOTALL)
+    parsed = []
+    for row in rows:
+        cells = re.findall(
+            r"<(?:th|td)\b[^>]*>(.*?)</(?:th|td)>",
+            row,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        parsed.append(
+            [
+                re.sub(r"\s+", " ", unescape(re.sub(r"<[^>]+>", " ", cell))).strip()
+                for cell in cells
+            ]
+        )
+    return parsed
+
+
+def extract_yamama_cement(content: bytes, source_url: str) -> list[dict[str, Any]]:
+    page = content.decode("utf-8", "replace")
+    table_match = re.search(
+        r'<table\b[^>]*id=["\']monthlySalesOfCementTable["\'][^>]*>.*?</table>',
+        page,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if not table_match:
+        raise ValueError("Yamama Cement page is missing its monthly company sales table.")
+
+    table = _html_table_cells(table_match.group())
+    if len(table) < 11 or len(table[0]) < 2:
+        raise ValueError("Yamama Cement monthly sales table is incomplete.")
+
+    periods: list[tuple[int, int]] = []
+    for label in table[0][1:]:
+        match = re.fullmatch(r"(\d{4})-(.+)", label)
+        month = ARABIC_MONTHS.get(match.group(2).strip()) if match else None
+        if not match or not month:
+            raise ValueError(f"Yamama Cement table contains an unknown month label: {label!r}.")
+        periods.append((int(match.group(1)), month))
+    if len(periods) != len(set(periods)):
+        raise ValueError("Yamama Cement monthly sales table repeats a month.")
+
+    totals = [0.0] * len(periods)
+    companies = 0
+    for row in table[1:]:
+        if len(row) != len(periods) + 1 or not row[0]:
+            raise ValueError("Yamama Cement monthly sales table has a malformed company row.")
+        values = row[1:]
+        if not any(value.strip() for value in values):
+            continue
+        companies += 1
+        for index, value in enumerate(values):
+            if not value.strip() or value.strip() == "-":
+                continue
+            try:
+                amount = float(value.replace(",", ""))
+            except ValueError as error:
+                raise ValueError(
+                    f"Yamama Cement table contains an invalid sales value for {periods[index]}."
+                ) from error
+            if amount < 0:
+                raise ValueError(f"Yamama Cement table contains negative sales for {periods[index]}.")
+            totals[index] += amount
+    if companies < 10:
+        raise ValueError(f"Yamama Cement table contained only {companies} company rows.")
+
+    rows = []
+    for (year, month), value in zip(periods, totals):
+        if value == 0:
+            continue
+        rows.append(
+            make_fact(
+                "KPI_03",
+                year,
+                month,
+                value,
+                "thousand tonnes",
+                f"Yamama Cement monthly sales total ({companies} Saudi cement companies)",
+                source_url,
+                "Sum of monthly sales across the Saudi cement companies listed in Yamama Cement's report. "
+                f"Argaam's September 2026 report independently confirms 4,439 thousand tonnes "
+                f"({ARGAAM_CEMENT_REFERENCE_URL}).",
+            )
+        )
+    if not rows:
+        raise ValueError("Yamama Cement monthly sales table contains no reported totals.")
+    return sorted(rows, key=lambda row: row["PeriodStart"])
+
+
+def yamama_cement_report_url() -> str:
+    latest = datetime.now(RIYADH_TZ)
+    query = urlencode(
+        {
+            "IsRequested": "true",
+            "FirstYear": 2000,
+            "FirstMonth": 1,
+            "SecondYear": latest.year,
+            "SecondMonth": latest.month,
+            "ReportType": 4,
+        }
+    )
+    return f"{YAMAMA_CEMENT_URL}?{query}"
+
+
 def monthly_rows(sheet, year_index: int, month_index: int):
     for row in sheet.iter_rows(values_only=True):
         if len(row) <= max(year_index, month_index):
@@ -798,6 +931,16 @@ class MartService:
         except (OSError, ValueError, KeyError, IndexError) as error:
             errors["KPI_02"] = str(error)
 
+        cement_url = yamama_cement_report_url()
+        try:
+            extracted["KPI_03"] = extract_yamama_cement(fetch(cement_url), cement_url)
+            notes["KPI_03"] = (
+                "Extracted monthly total cement sales from Yamama Cement's company-level report; "
+                "the latest available month is cross-checked against Argaam's Saudi-wide report."
+            )
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            errors["KPI_03"] = str(error)
+
         main_url = source_url["KPI_05"]
         extracted_components: list[dict[str, Any]] = []
         try:
@@ -851,7 +994,9 @@ class MartService:
         except (OSError, ValueError, KeyError, IndexError) as error:
             errors["KPI_16"] = str(error)
 
-        replace_ids = {"KPI_01", "KPI_02", "KPI_05", "KPI_07", "KPI_08", "KPI_11", "KPI_12", "KPI_13", "KPI_16"}
+        replace_ids = {
+            "KPI_01", "KPI_02", "KPI_03", "KPI_05", "KPI_07", "KPI_08", "KPI_11", "KPI_12", "KPI_13", "KPI_16"
+        }
         successful = {
             kpi_id: rows for kpi_id, rows in extracted.items()
             if kpi_id in replace_ids and rows and kpi_id not in errors
@@ -960,7 +1105,8 @@ class MartService:
                     "observedTo": source.get("ObservedTo"),
                     "sourceAccessStatus": source.get("ExtractionStatus"),
                     "liveExtractionConfigured": kpi_id in {
-                        "KPI_01", "KPI_02", "KPI_05", "KPI_07", "KPI_08", "KPI_11", "KPI_12", "KPI_13", "KPI_16"
+                        "KPI_01", "KPI_02", "KPI_03", "KPI_05", "KPI_07", "KPI_08",
+                        "KPI_11", "KPI_12", "KPI_13", "KPI_16"
                     },
                 }
             )
@@ -974,8 +1120,9 @@ class MartService:
             "lastError": last_error,
             "liveExtractionConfigured": True,
             "notice": (
-                "Scheduled refresh extracts the DataSaudi PMI monthly series for KPI 01 and the SAMA weekly POS "
-                "reports for KPI 02, downloads official Excel reports from GASTAT for KPIs 05, 07, 08, "
+                "Scheduled refresh extracts the DataSaudi PMI monthly series for KPI 01, SAMA weekly POS reports "
+                "for KPI 02, and Yamama Cement monthly sales for KPI 03; it downloads official Excel reports "
+                "from GASTAT for KPIs 05, 07, 08, "
                 "11, 12 and 13 (fixed report URLs from the source register) and the Ministry of Finance quarterly "
                 "budget performance reports for KPI 16 (report links are discovered on the MOF year pages). "
                 "Other KPIs need verified provider-specific connectors."
