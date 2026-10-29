@@ -11,6 +11,10 @@ import ssl
 from copy import copy
 from io import BytesIO
 from datetime import date, datetime, timedelta, timezone
+from urllib.parse import urljoin
+
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 
 RIYADH_TZ = timezone(timedelta(hours=3), "Asia/Riyadh")
 from http import HTTPStatus
@@ -31,12 +35,13 @@ WORKBOOK_PATH = Path(os.environ.get("KPI_DATA_WORKBOOK", DEFAULT_WORKBOOK))
 REFRESH_MINUTES = max(1, int(os.environ.get("KPI_REFRESH_MINUTES", "1440")))
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("KPI_PORT", "8765"))
-ALLOWED_HOSTS = {"www.stats.gov.sa", "www.mof.gov.sa", "api.datasaudi.sa"}
+ALLOWED_HOSTS = {"www.stats.gov.sa", "www.mof.gov.sa", "api.datasaudi.sa", "www.sama.gov.sa"}
 DATASAUDI_PMI_URL = (
     "https://api.datasaudi.sa/tesseract/data.jsonrecords"
     "?cube=pmi&drilldowns=Month&measures=Purchasing+Manager+Index"
 )
 DATASAUDI_PMI_PAGE = "https://datasaudi.sa/en/#purchasing-manager-index"
+SAMA_POS_PAGE = "https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/POS.aspx"
 
 FACT_HEADERS = (
     "CountryCode",
@@ -388,6 +393,80 @@ def extract_datasaudi_pmi(content: bytes) -> list[dict[str, Any]]:
     return sorted(rows, key=lambda row: row["PeriodStart"])
 
 
+def sama_pos_report_urls(fetch) -> list[str]:
+    html = fetch(SAMA_POS_PAGE).decode("utf-8", "replace")
+    html = html.replace(r"\u002f", "/")
+    paths = re.findall(r'"FileRef"\s*:\s*"([^"]+\.pdf)"', html, flags=re.IGNORECASE)
+    paths = [path for path in paths if "/Statistics/Indices/POS_EN/" in path]
+    urls = list(dict.fromkeys(urljoin(SAMA_POS_PAGE, path) for path in paths))
+    if not urls:
+        raise ValueError("SAMA POS page did not contain any weekly report PDF links.")
+    return urls[:10]
+
+
+def extract_sama_pos_pdf(content: bytes, source_url: str) -> list[dict[str, Any]]:
+    try:
+        reader = PdfReader(BytesIO(content))
+        if not reader.pages:
+            raise ValueError("SAMA POS report PDF has no pages.")
+        text = reader.pages[0].extract_text() or ""
+    except (PdfReadError, OSError, EOFError) as error:
+        raise ValueError(f"Unable to read SAMA POS report PDF: {error}") from error
+
+    return extract_sama_pos_text(text, source_url)
+
+
+def extract_sama_pos_text(text: str, source_url: str) -> list[dict[str, Any]]:
+    periods = re.findall(
+        r"(\d{1,2}\s+[A-Za-z]{3},\s*\d{2})\s*-\s*(\d{1,2}\s+[A-Za-z]{3},\s*\d{2})",
+        text,
+    )
+    total = re.search(r"(?m)^\s*Total\s+(.+)$", text)
+    if len(periods) != 4 or not total:
+        raise ValueError("SAMA POS report is missing its four weekly periods or total activity row.")
+
+    values = re.findall(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?", total.group(1))
+    if len(values) < 8:
+        raise ValueError("SAMA POS total row does not contain four count/value pairs.")
+    try:
+        date_ranges = [
+            (
+                datetime.strptime(start.replace(", ", ","), "%d %b,%y").date(),
+                datetime.strptime(end.replace(", ", ","), "%d %b,%y").date(),
+            )
+            for start, end in periods
+        ]
+        pairs = [(float(values[index].replace(",", "")), float(values[index + 1].replace(",", "")))
+                 for index in range(0, 8, 2)]
+    except ValueError as error:
+        raise ValueError("SAMA POS report contains an invalid date or total value.") from error
+
+    rows = []
+    for (period_start, period_end), (count, value) in zip(date_ranges, pairs):
+        if period_end < period_start or count < 0 or value < 0:
+            raise ValueError("SAMA POS report contains an invalid weekly period or total.")
+        for measure, amount, unit in (
+            ("transaction count", count, "thousand transactions"),
+            ("transaction value", value, "SAR thousand"),
+        ):
+            fact = make_fact(
+                "KPI_02",
+                period_start.year,
+                period_start.month,
+                amount,
+                unit,
+                f"SAMA POS total {measure}",
+                source_url,
+                "Weekly total across all activities from the SAMA weekly POS transactions report; "
+                "the source reports both measures in thousands.",
+            )
+            fact["PeriodStart"] = period_start.isoformat()
+            fact["PeriodEnd"] = period_end.isoformat()
+            fact["MonthName"] = f"{period_start.strftime('%b %d')}-{period_end.strftime('%b %d')}"
+            rows.append(fact)
+    return rows
+
+
 def monthly_rows(sheet, year_index: int, month_index: int):
     for row in sheet.iter_rows(values_only=True):
         if len(row) <= max(year_index, month_index):
@@ -690,6 +769,22 @@ class MartService:
         except (OSError, ValueError, KeyError, IndexError) as error:
             errors["KPI_01"] = str(error)
 
+        try:
+            pos_facts: dict[tuple[str, str], dict[str, Any]] = {}
+            for report_url in sama_pos_report_urls(fetch):
+                for fact in extract_sama_pos_pdf(fetch(report_url), report_url):
+                    pos_facts.setdefault((fact["PeriodStart"], fact["SourceTable"]), fact)
+            extracted["KPI_02"] = sorted(
+                pos_facts.values(),
+                key=lambda fact: (fact["PeriodStart"], fact["SourceTable"]),
+            )
+            notes["KPI_02"] = (
+                "Extracted the weekly total transaction count and value from SAMA POS reports; "
+                "both measures are retained as separate observations."
+            )
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            errors["KPI_02"] = str(error)
+
         main_url = source_url["KPI_05"]
         extracted_components: list[dict[str, Any]] = []
         try:
@@ -743,7 +838,7 @@ class MartService:
         except (OSError, ValueError, KeyError, IndexError) as error:
             errors["KPI_16"] = str(error)
 
-        replace_ids = {"KPI_01", "KPI_05", "KPI_07", "KPI_08", "KPI_11", "KPI_12", "KPI_13", "KPI_16"}
+        replace_ids = {"KPI_01", "KPI_02", "KPI_05", "KPI_07", "KPI_08", "KPI_11", "KPI_12", "KPI_13", "KPI_16"}
         successful = {
             kpi_id: rows for kpi_id, rows in extracted.items()
             if kpi_id in replace_ids and rows and kpi_id not in errors
@@ -852,7 +947,7 @@ class MartService:
                     "observedTo": source.get("ObservedTo"),
                     "sourceAccessStatus": source.get("ExtractionStatus"),
                     "liveExtractionConfigured": kpi_id in {
-                        "KPI_01", "KPI_05", "KPI_07", "KPI_08", "KPI_11", "KPI_12", "KPI_13", "KPI_16"
+                        "KPI_01", "KPI_02", "KPI_05", "KPI_07", "KPI_08", "KPI_11", "KPI_12", "KPI_13", "KPI_16"
                     },
                 }
             )
@@ -866,8 +961,8 @@ class MartService:
             "lastError": last_error,
             "liveExtractionConfigured": True,
             "notice": (
-                "Scheduled refresh extracts the DataSaudi PMI monthly series for KPI 01, downloads official Excel "
-                "reports from GASTAT for KPIs 05, 07, 08, "
+                "Scheduled refresh extracts the DataSaudi PMI monthly series for KPI 01 and the SAMA weekly POS "
+                "reports for KPI 02, downloads official Excel reports from GASTAT for KPIs 05, 07, 08, "
                 "11, 12 and 13 (fixed report URLs from the source register) and the Ministry of Finance quarterly "
                 "budget performance reports for KPI 16 (report links are discovered on the MOF year pages). "
                 "Other KPIs need verified provider-specific connectors."

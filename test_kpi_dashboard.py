@@ -10,7 +10,14 @@ from urllib.request import Request, urlopen
 
 from openpyxl import Workbook, load_workbook
 
-from kpi_dashboard import DashboardHandler, MartService, extract_datasaudi_pmi, extract_mof_capex
+from kpi_dashboard import (
+    DashboardHandler,
+    MartService,
+    extract_datasaudi_pmi,
+    extract_mof_capex,
+    extract_sama_pos_text,
+    sama_pos_report_urls,
+)
 
 
 def mof_workbook(title: str, capex_values: list[float]) -> bytes:
@@ -66,6 +73,36 @@ class DataSaudiPmiTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "incomplete"):
             extract_datasaudi_pmi(json.dumps(payload).encode("utf-8"))
+
+
+class SamaPosTests(unittest.TestCase):
+    def test_finds_report_pdf_links_in_sharepoint_list_data(self) -> None:
+        html = r'''{"FileRef":"\u002fen-US\u002fStatistics\u002fIndices\u002fPOS_EN\u002fWeekly_Points_of_Sale_Transactions_Report.pdf"}'''
+        urls = sama_pos_report_urls(lambda _: html.encode("utf-8"))
+        self.assertEqual(len(urls), 1)
+        self.assertTrue(urls[0].endswith("/POS_EN/Weekly_Points_of_Sale_Transactions_Report.pdf"))
+
+    def test_extracts_weekly_count_and_value_as_separate_rows(self) -> None:
+        text = """
+        27 Sep,26 - 03 Oct,26 04 Oct,26 - 10 Oct,26 11 Oct,26 - 17 Oct,26 18 Oct,26 - 24 Oct,26
+        Number of Transactions Value of Transactions
+        Total 273,924 16,507,357 253,359 13,525,658 246,421 12,602,805 229,116 11,779,845 -7.0 -6.5
+        """
+        rows = extract_sama_pos_text(text, "https://www.sama.gov.sa/report.pdf")
+        self.assertEqual(len(rows), 8)
+        latest = [row for row in rows if row["PeriodStart"] == "2026-10-18"]
+        self.assertEqual({row["SourceTable"] for row in latest}, {
+            "SAMA POS total transaction count",
+            "SAMA POS total transaction value",
+        })
+        count = next(row for row in latest if row["Unit"] == "thousand transactions")
+        value = next(row for row in latest if row["Unit"] == "SAR thousand")
+        self.assertEqual((count["Value"], count["PeriodEnd"]), (229116.0, "2026-10-24"))
+        self.assertEqual(value["Value"], 11779845.0)
+
+    def test_rejects_report_without_total_or_periods(self) -> None:
+        with self.assertRaisesRegex(ValueError, "four weekly periods or total"):
+            extract_sama_pos_text("Weekly Points of Sale Transactions", "u")
 
 
 def make_workbook(path: Path) -> None:
