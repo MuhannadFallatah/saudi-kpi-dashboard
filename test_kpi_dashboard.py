@@ -15,6 +15,7 @@ from kpi_dashboard import (
     MartService,
     extract_datasaudi_pmi,
     extract_datasaudi_private_lending,
+    extract_datasaudi_saibor,
     extract_mof_capex,
     extract_sama_pos_text,
     extract_yamama_cement,
@@ -75,6 +76,26 @@ class DataSaudiPmiTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "incomplete"):
             extract_datasaudi_pmi(json.dumps(payload).encode("utf-8"))
+
+
+class DataSaudiSaiborTests(unittest.TestCase):
+    def test_extracts_monthly_rate(self) -> None:
+        payload = {
+            "page": {"total": 2},
+            "data": [
+                {"Month": "2026-09", "Saudi Interbank Offered Rates": 5.0127},
+                {"Month": "2026-08", "Saudi Interbank Offered Rates": 4.83},
+            ],
+        }
+        rows = extract_datasaudi_saibor(json.dumps(payload).encode("utf-8"))
+        self.assertEqual([row["PeriodStart"] for row in rows], ["2026-08-01", "2026-09-01"])
+        self.assertEqual(rows[1]["KPI_ID"], "KPI_09")
+        self.assertEqual(rows[1]["Value"], 5.0127)
+
+    def test_rejects_incomplete_response(self) -> None:
+        payload = {"page": {"total": 3}, "data": [{"Month": "2026-09", "Saudi Interbank Offered Rates": 5.0}]}
+        with self.assertRaisesRegex(ValueError, "incomplete"):
+            extract_datasaudi_saibor(json.dumps(payload).encode("utf-8"))
 
 
 class DataSaudiPrivateLendingTests(unittest.TestCase):

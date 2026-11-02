@@ -35,7 +35,9 @@ PMI release archive), KPI 02 (SAMA weekly POS report PDFs; transaction count
 and transaction value are stored as separate fact rows), KPI 03 (Yamama
 Cement's monthly company sales table, summed across companies; Argaam's Saudi
 market report is used as a cross-check), and KPI 04 (DataSaudi's monthly
-Grand Total of banks' claims on the private sector, sourced to SAMA).
+Grand Total of banks' claims on the private sector, sourced to SAMA), and
+KPI 09 (DataSaudi's monthly Saudi interbank offered rate, sourced to SAMA;
+tenor is not specified by the source).
 KPIs 05, 07, 08, 11, 12 and 13 use GASTAT workbooks (fixed URLs), and KPI 16
 uses Ministry of Finance quarterly
 budget performance reports, "Non-financial Assets (CAPEX)", quarterly from

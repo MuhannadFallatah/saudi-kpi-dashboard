@@ -53,6 +53,13 @@ DATASAUDI_PRIVATE_LENDING_URL = (
     "?cube=lending_private_sector&drilldowns=Lending+Type%2CMonth&measures=Million+SAR&locale=en"
 )
 DATASAUDI_PRIVATE_LENDING_PAGE = "https://datasaudi.sa/ar/#lending-to-the-private-sector"
+DATASAUDI_SAIBOR_URL = (
+    "https://api.datasaudi.sa/tesseract/data.jsonrecords"
+    "?cube=sama_interest_rates_month&drilldowns=Month"
+    "&measures=Saudi+Interbank+Offered+Rates&locale=en"
+)
+DATASAUDI_SAIBOR_PAGE = "https://datasaudi.sa/ar/#lending-rates"
+SAMA_MONTHLY_STATS_PAGE = "https://www.sama.gov.sa/en-US/Statistics/Pages/MonthlyStatistics.aspx"
 SAMA_POS_PAGE = "https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/POS.aspx"
 YAMAMA_CEMENT_URL = "https://www.yamamacement.com/ar/Reports/FullReport"
 ARGAAM_CEMENT_REFERENCE_URL = "https://www.argaam.com/ar/financial-reports/cement-monthly-report/2026/66"
@@ -462,6 +469,48 @@ def extract_datasaudi_private_lending(content: bytes) -> list[dict[str, Any]]:
         )
     if not rows_by_period:
         raise ValueError("DataSaudi private lending response contains no Grand Total observations.")
+    return [rows_by_period[period] for period in sorted(rows_by_period)]
+
+
+def extract_datasaudi_saibor(content: bytes) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(content)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("DataSaudi SAIBOR response is not valid JSON.") from error
+    if not isinstance(payload, dict):
+        raise ValueError("DataSaudi SAIBOR response must be a JSON object.")
+    data = payload.get("data")
+    page = payload.get("page")
+    total = page.get("total") if isinstance(page, dict) else None
+    if not isinstance(data, list) or not data:
+        raise ValueError("DataSaudi SAIBOR response contains no monthly observations.")
+    if not isinstance(total, int) or total != len(data):
+        raise ValueError("DataSaudi SAIBOR response is incomplete or has an invalid total.")
+
+    rows_by_period: dict[str, dict[str, Any]] = {}
+    for item in data:
+        if not isinstance(item, dict):
+            raise ValueError("DataSaudi SAIBOR response contains an invalid observation.")
+        period = item.get("Month")
+        value = item.get("Saudi Interbank Offered Rates")
+        if not isinstance(period, str) or not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", period):
+            raise ValueError(f"DataSaudi SAIBOR response has an invalid month: {period!r}.")
+        if period in rows_by_period:
+            raise ValueError(f"DataSaudi SAIBOR response repeats {period}.")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+            raise ValueError(f"DataSaudi SAIBOR response has an invalid rate for {period}.")
+        year, month = (int(part) for part in period.split("-"))
+        rows_by_period[period] = make_fact(
+            "KPI_09",
+            year,
+            month,
+            value,
+            "percent",
+            "Saudi Interbank Offered Rates - monthly (DataSaudi/SAMA)",
+            DATASAUDI_SAIBOR_PAGE,
+            "Monthly Saudi interbank offered rate (SAIBOR) from DataSaudi's 'Interest Rate - Monthly' "
+            f"table sourced to SAMA ({SAMA_MONTHLY_STATS_PAGE}). Tenor is not specified by the source.",
+        )
     return [rows_by_period[period] for period in sorted(rows_by_period)]
 
 
@@ -982,6 +1031,15 @@ class MartService:
             errors["KPI_04"] = str(error)
 
         try:
+            extracted["KPI_09"] = extract_datasaudi_saibor(fetch(DATASAUDI_SAIBOR_URL))
+            notes["KPI_09"] = (
+                "Extracted DataSaudi's monthly Saudi Interbank Offered Rate (source: SAMA, "
+                f"{SAMA_MONTHLY_STATS_PAGE}); unit is percent."
+            )
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            errors["KPI_09"] = str(error)
+
+        try:
             pos_facts: dict[tuple[str, str], dict[str, Any]] = {}
             for report_url in sama_pos_report_urls(fetch):
                 for fact in extract_sama_pos_pdf(fetch(report_url), report_url):
@@ -1063,7 +1121,7 @@ class MartService:
 
         replace_ids = {
             "KPI_01", "KPI_02", "KPI_03", "KPI_04", "KPI_05", "KPI_07", "KPI_08",
-            "KPI_11", "KPI_12", "KPI_13", "KPI_16"
+            "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_16"
         }
         successful = {
             kpi_id: rows for kpi_id, rows in extracted.items()
@@ -1174,7 +1232,7 @@ class MartService:
                     "sourceAccessStatus": source.get("ExtractionStatus"),
                     "liveExtractionConfigured": kpi_id in {
                         "KPI_01", "KPI_02", "KPI_03", "KPI_04", "KPI_05", "KPI_07", "KPI_08",
-                        "KPI_11", "KPI_12", "KPI_13", "KPI_16"
+                        "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_16"
                     },
                 }
             )
