@@ -16,6 +16,8 @@ from kpi_dashboard import (
     extract_datasaudi_pmi,
     extract_datasaudi_private_lending,
     extract_datasaudi_saibor,
+    extract_investing_cds,
+    extract_datasaudi_tasi,
     extract_mof_capex,
     extract_sama_pos_text,
     extract_yamama_cement,
@@ -76,6 +78,38 @@ class DataSaudiPmiTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(ValueError, "incomplete"):
             extract_datasaudi_pmi(json.dumps(payload).encode("utf-8"))
+
+
+class InvestingCdsTests(unittest.TestCase):
+    def test_tasi_extracts_only_index_indicator(self) -> None:
+        payload = {
+            "page": {"total": 3},
+            "data": [
+                {"Month": "2026-09", "Indicator": "Index", "Value": 10440.64},
+                {"Month": "2026-09", "Indicator": "Banks", "Value": 999.0},
+                {"Month": "2026-08", "Indicator": "Index", "Value": 11127.08},
+            ],
+        }
+        rows = extract_datasaudi_tasi(json.dumps(payload).encode("utf-8"))
+        self.assertEqual([row["PeriodStart"] for row in rows], ["2026-08-01", "2026-09-01"])
+        self.assertEqual(rows[1]["KPI_ID"], "KPI_15")
+        self.assertEqual(rows[1]["Value"], 10440.64)
+    def test_extracts_daily_close(self) -> None:
+        record = {
+            "rowDateTimestamp": "2026-10-29T00:00:00Z", "last_closeRaw": "68.1", "last_openRaw": "69.2",
+            "last_maxRaw": "69.3", "last_minRaw": "68.0",
+        }
+        state = {"props": {"pageProps": {"state": {"historicalDataStore": {"historicalData": {"data": [record]}}}}}}
+        html = f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(state)}</script>'
+        rows = extract_investing_cds(html.encode("utf-8"))
+        self.assertEqual(rows[0]["KPI_ID"], "KPI_14")
+        self.assertEqual(rows[0]["PeriodStart"], "2026-10-29")
+        self.assertEqual(rows[0]["Close"], 68.1)
+        self.assertEqual(rows[0]["High"], 69.3)
+
+    def test_rejects_blocked_page(self) -> None:
+        with self.assertRaisesRegex(ValueError, "blocked"):
+            extract_investing_cds(b"<html>Just a moment</html>")
 
 
 class DataSaudiSaiborTests(unittest.TestCase):

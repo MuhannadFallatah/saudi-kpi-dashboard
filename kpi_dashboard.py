@@ -42,7 +42,17 @@ ALLOWED_HOSTS = {
     "api.datasaudi.sa",
     "www.sama.gov.sa",
     "www.yamamacement.com",
+    "www.investing.com",
+    "muhannadfallatah.github.io",
 }
+DATASAUDI_TASI_URL = (
+    "https://api.datasaudi.sa/tesseract/data.jsonrecords"
+    "?cube=tadawul_indicators&drilldowns=Indicator%2CMonth&measures=Value&locale=en"
+)
+DATASAUDI_TASI_PAGE = "https://datasaudi.sa/en/#tadawul-indicators"
+INVESTING_CDS_URL = "https://www.investing.com/rates-bonds/saudi-arabia-cds-5-year-usd-historical-data"
+INVESTING_CDS_PAGE = "https://www.investing.com/rates-bonds/saudi-arabia-cds-5-year-usd"
+PUBLISHED_KPI_URL = "https://muhannadfallatah.github.io/saudi-kpi-dashboard/data/kpi/{kpi_id}.json"
 DATASAUDI_PMI_URL = (
     "https://api.datasaudi.sa/tesseract/data.jsonrecords"
     "?cube=pmi&drilldowns=Month&measures=Purchasing+Manager+Index"
@@ -512,6 +522,97 @@ def extract_datasaudi_saibor(content: bytes) -> list[dict[str, Any]]:
             f"table sourced to SAMA ({SAMA_MONTHLY_STATS_PAGE}). Tenor is not specified by the source.",
         )
     return [rows_by_period[period] for period in sorted(rows_by_period)]
+
+
+def extract_investing_cds(content: bytes) -> list[dict[str, Any]]:
+    html = content.decode("utf-8", "replace")
+    match = re.search(r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>', html, re.S)
+    if not match:
+        raise ValueError("Investing.com page has no embedded historical data (possibly blocked).")
+    try:
+        state = json.loads(match.group(1))["props"]["pageProps"]["state"]
+        records = state["historicalDataStore"]["historicalData"]["data"]
+    except (json.JSONDecodeError, KeyError, TypeError) as error:
+        raise ValueError("Investing.com historical data structure was not recognised.") from error
+    if not isinstance(records, list) or not records:
+        raise ValueError("Investing.com page contains no CDS observations.")
+
+    rows: dict[str, dict[str, Any]] = {}
+    for record in records:
+        try:
+            day = datetime.fromisoformat(record["rowDateTimestamp"].replace("Z", "+00:00")).date()
+            close = float(record["last_closeRaw"])
+            values = {
+                key: float(record[f"last_{name}Raw"])
+                for key, name in (("Open", "open"), ("High", "max"), ("Low", "min"))
+            }
+        except (KeyError, TypeError, ValueError) as error:
+            raise ValueError("Investing.com CDS record is malformed.") from error
+        if close <= 0:
+            raise ValueError(f"Investing.com CDS close is invalid for {day}.")
+        fact = make_fact(
+            "KPI_14",
+            day.year,
+            day.month,
+            close,
+            "basis points",
+            "Saudi Arabia CDS 5 Year USD - daily close (Investing.com)",
+            INVESTING_CDS_PAGE,
+            "Daily close of the Saudi Arabia 5-year USD CDS spread from Investing.com's historical data "
+            "page. The page only exposes about one month, so older days come from earlier refreshes.",
+        )
+        fact["PeriodStart"] = fact["PeriodEnd"] = day.isoformat()
+        fact["MonthName"] = day.strftime("%b %d")
+        fact.update(values)
+        fact["Close"] = close
+        rows[fact["PeriodStart"]] = fact
+    return [rows[key] for key in sorted(rows)]
+
+
+def extract_datasaudi_tasi(content: bytes) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(content)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("DataSaudi Tadawul response is not valid JSON.") from error
+    if not isinstance(payload, dict):
+        raise ValueError("DataSaudi Tadawul response must be a JSON object.")
+    data = payload.get("data")
+    page = payload.get("page")
+    total = page.get("total") if isinstance(page, dict) else None
+    if not isinstance(data, list) or not data:
+        raise ValueError("DataSaudi Tadawul response contains no observations.")
+    if not isinstance(total, int) or total != len(data):
+        raise ValueError("DataSaudi Tadawul response is incomplete or has an invalid total.")
+
+    rows: dict[str, dict[str, Any]] = {}
+    for item in data:
+        if not isinstance(item, dict):
+            raise ValueError("DataSaudi Tadawul response contains an invalid observation.")
+        if item.get("Indicator") != "Index":
+            continue
+        period = item.get("Month")
+        value = item.get("Value")
+        if not isinstance(period, str) or not re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", period):
+            raise ValueError(f"DataSaudi Tadawul response has an invalid month: {period!r}.")
+        if period in rows:
+            raise ValueError(f"DataSaudi Tadawul response repeats the index for {period}.")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            raise ValueError(f"DataSaudi Tadawul response has an invalid index for {period}.")
+        year, month = (int(part) for part in period.split("-"))
+        rows[period] = make_fact(
+            "KPI_15",
+            year,
+            month,
+            value,
+            "index points",
+            "Tadawul All Share Index (TASI) - monthly (DataSaudi/Tadawul)",
+            DATASAUDI_TASI_PAGE,
+            "Monthly Tadawul All Share Index level from DataSaudi's 'Tadawul Indicators - Monthly' table "
+            "('Index' indicator); the series is monthly, not daily.",
+        )
+    if not rows:
+        raise ValueError("DataSaudi Tadawul response contains no 'Index' observations.")
+    return [rows[period] for period in sorted(rows)]
 
 
 def sama_pos_report_urls(fetch) -> list[str]:
@@ -1040,6 +1141,37 @@ class MartService:
             errors["KPI_09"] = str(error)
 
         try:
+            extracted["KPI_15"] = extract_datasaudi_tasi(fetch(DATASAUDI_TASI_URL))
+            notes["KPI_15"] = (
+                "Extracted DataSaudi's monthly Tadawul All Share Index level (Tadawul Indicators table, "
+                "'Index' indicator); monthly rather than daily."
+            )
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            errors["KPI_15"] = str(error)
+
+        try:
+            cds = extract_investing_cds(fetch(INVESTING_CDS_URL))
+            history: dict[str, dict[str, Any]] = {}
+            try:
+                previous = json.loads(
+                    download_bytes(PUBLISHED_KPI_URL.format(kpi_id="KPI_14") + f"?t={int(time.time())}")
+                )
+                for fact in previous.get("data", []):
+                    if fact.get("KPI_ID") == "KPI_14" and fact.get("PeriodStart"):
+                        history[fact["PeriodStart"]] = fact
+            except (OSError, ValueError, AttributeError):
+                pass
+            history.update({fact["PeriodStart"]: fact for fact in cds})
+            extracted["KPI_14"] = [history[key] for key in sorted(history)]
+            notes["KPI_14"] = (
+                "Extracted daily closes of the Saudi Arabia 5-year USD CDS from Investing.com "
+                f"({INVESTING_CDS_PAGE}); the page exposes roughly one month, so history accumulates "
+                "across refreshes."
+            )
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            errors["KPI_14"] = str(error)
+
+        try:
             pos_facts: dict[tuple[str, str], dict[str, Any]] = {}
             for report_url in sama_pos_report_urls(fetch):
                 for fact in extract_sama_pos_pdf(fetch(report_url), report_url):
@@ -1121,7 +1253,7 @@ class MartService:
 
         replace_ids = {
             "KPI_01", "KPI_02", "KPI_03", "KPI_04", "KPI_05", "KPI_07", "KPI_08",
-            "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_16"
+            "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_14", "KPI_15", "KPI_16"
         }
         successful = {
             kpi_id: rows for kpi_id, rows in extracted.items()
@@ -1232,7 +1364,7 @@ class MartService:
                     "sourceAccessStatus": source.get("ExtractionStatus"),
                     "liveExtractionConfigured": kpi_id in {
                         "KPI_01", "KPI_02", "KPI_03", "KPI_04", "KPI_05", "KPI_07", "KPI_08",
-                        "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_16"
+                        "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_14", "KPI_15", "KPI_16"
                     },
                 }
             )

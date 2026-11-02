@@ -37,7 +37,10 @@ Cement's monthly company sales table, summed across companies; Argaam's Saudi
 market report is used as a cross-check), and KPI 04 (DataSaudi's monthly
 Grand Total of banks' claims on the private sector, sourced to SAMA), and
 KPI 09 (DataSaudi's monthly Saudi interbank offered rate, sourced to SAMA;
-tenor is not specified by the source).
+tenor is not specified by the source), and KPI 14 (Investing.com daily Saudi
+5-year USD CDS close; the page exposes only about one month, so history
+accumulates from earlier published refreshes, and the site may block runners),
+and KPI 15 (DataSaudi's monthly Tadawul All Share Index level; monthly, not daily).
 KPIs 05, 07, 08, 11, 12 and 13 use GASTAT workbooks (fixed URLs), and KPI 16
 uses Ministry of Finance quarterly
 budget performance reports, "Non-financial Assets (CAPEX)", quarterly from
