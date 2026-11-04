@@ -44,7 +44,54 @@ ALLOWED_HOSTS = {
     "www.yamamacement.com",
     "www.investing.com",
     "muhannadfallatah.github.io",
+    "database.stats.gov.sa",
 }
+GASTAT_DB_SELECT_URL = "https://database.stats.gov.sa/Build_Reports/flexmonster/select"
+GASTAT_IMPORTS_REPORT_URL = (
+    "https://database.stats.gov.sa/Build_Reports/main/home/build-report?reportData=9516309&fetchSavedSlice=true"
+)
+GASTAT_IMPORTS_INDEX = "DPV_IMP_CP21_EFFT020101"
+GASTAT_END_USE_REPORT_URL = (
+    "https://database.stats.gov.sa/Build_Reports/main/home/build-report?reportData=9516308&fetchSavedSlice=true"
+)
+GASTAT_END_USE_INDEX = "DPV_IMP_ENDU_EFFT020101"
+GFCF_END_USE = "Gross Fixed Capital Formation"
+GASTAT_EXPORTS_REPORT_URL = (
+    "https://database.stats.gov.sa/Build_Reports/main/home/build-report?reportData=9516299&fetchSavedSlice=true"
+)
+GASTAT_EXPORTS_INDEX = "DPV_EXP_CP21_EFFT010101"
+OIL_CPC_CHAPTERS = {"12", "33"}
+GASTAT_CRUDE_REPORT_URL = (
+    "https://database.stats.gov.sa/Build_Reports/main/home/build-report?reportData=9515243&fetchSavedSlice=true"
+)
+GASTAT_CRUDE_INDEX = "DSD_OG_EAE_V_MV"
+CRUDE_UNIT = "Thousand Barrels"
+GASTAT_TOTAL_EXPORTS_REPORT_URL = (
+    "https://database.stats.gov.sa/Build_Reports/main/home/build-report?reportData=9516298&fetchSavedSlice=true"
+)
+GASTAT_TOTAL_EXPORTS_INDEX = "DPV_EXP_ENDU_EFFT010101"
+ITR_WORKBOOK_URL = (
+    "https://www.stats.gov.sa/documents/20117/2435267/ITR+Jul+2026.xlsx/"
+    "4cd729e2-a62f-9b94-b06a-23f5f66c54ec?t=1790669050760"
+)
+DATABASE_REPORT_URLS = {
+    "KPI_05": GASTAT_IMPORTS_REPORT_URL,
+    "KPI_07": GASTAT_END_USE_REPORT_URL,
+    "KPI_08": GASTAT_EXPORTS_REPORT_URL,
+    "KPI_11": GASTAT_CRUDE_REPORT_URL,
+    "KPI_12": GASTAT_TOTAL_EXPORTS_REPORT_URL,
+}
+DATABASE_REPORT_NOTES = {
+    "KPI_12": "GASTAT database report 'Exports Value by End Use': monthly sum of all end-use categories "
+              "(total goods exports), SAR million.",
+    "KPI_05": "GASTAT database report 'Imports Value by Central Product Classification (CPC2.1)': "
+              "monthly sum of all sections, SAR million.",
+    "KPI_07": "GASTAT database report 'Imports Value by End Use': Gross Fixed Capital Formation, SAR million.",
+    "KPI_08": "GASTAT database report 'Exports Value by Central Product Classification (CPC2.1)': "
+              "total exports less CPC chapters 12 and 33 (non-oil including re-exports), SAR million.",
+    "KPI_11": "GASTAT database report 'Crude Oil Exports': monthly crude oil export volume, thousand barrels.",
+}
+
 DATASAUDI_TASI_URL = (
     "https://api.datasaudi.sa/tesseract/data.jsonrecords"
     "?cube=tadawul_indicators&drilldowns=Indicator%2CMonth&measures=Value&locale=en"
@@ -201,6 +248,7 @@ def workbook_data(path: Path) -> dict[str, Any]:
             if row and row[1] == "KPI_08"
         ]
     workbook.close()
+    apply_database_report_sources(catalog, sources)
     return {
         "catalog": catalog,
         "sources": sources,
@@ -234,6 +282,244 @@ def download_bytes(url: str) -> bytes:
         if response.status != 200:
             raise OSError(f"Source returned HTTP {response.status}: {url}")
         return response.read()
+
+
+def apply_database_report_sources(catalog: list[dict[str, Any]], sources: dict[str, dict[str, Any]]) -> None:
+    # KPIs 05, 07 and 08 are fed from GASTAT database reports; replace the workbook's older source metadata.
+    for item in catalog:
+        kpi_id = item.get("KPI_ID")
+        url = DATABASE_REPORT_URLS.get(kpi_id)
+        if not url:
+            continue
+        note = DATABASE_REPORT_NOTES[kpi_id]
+        item.update({
+            "SourceURL": url,
+            "API_or_DataRoute": f"GASTAT database report (Build Reports API): {url}",
+            "VerifiedData_or_API_ReferenceURL": url,
+            "Access_Caveat": None,
+            "ExtractionNote": note,
+        })
+        source = sources.setdefault(kpi_id, {"KPI_ID": kpi_id})
+        source.update({
+            "PrimarySourceURL": url,
+            "ExtractedDataURL": url,
+            "ExtractionStatus": "Extracted",
+            "ExtractionNote": note,
+        })
+
+
+def post_json(url: str, body: dict[str, Any]) -> dict[str, Any]:
+    parsed = urlparse(url)
+    if parsed.scheme != "https" or parsed.hostname not in ALLOWED_HOSTS:
+        raise ValueError("Live extractors only allow HTTPS URLs on approved GASTAT and MOF hosts.")
+    request = Request(
+        url,
+        data=json.dumps(body).encode("utf-8"),
+        headers={"User-Agent": "Saudi-KPI-Monitor/1.0", "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=60, context=tls_context()) as response:
+        if response.status != 200:
+            raise OSError(f"Source returned HTTP {response.status}: {url}")
+        return json.loads(response.read().decode("utf-8"))
+
+
+def fetch_gastat_imports() -> dict[str, Any]:
+    # Same aggregate the GASTAT "Imports Value by CPC2.1" report requests, without the product rows.
+    return post_json(GASTAT_DB_SELECT_URL, {
+        "type": "select",
+        "index": GASTAT_IMPORTS_INDEX,
+        "query": {"aggs": {
+            "by": {"cols": [{"uniqueName": "YEAR_MONTH"}]},
+            "values": [{"func": "sum", "field": {"uniqueName": "OBS_VALUE"}}],
+        }},
+        "page": 0,
+    })
+
+
+def fetch_gastat_total_exports() -> dict[str, Any]:
+    return post_json(GASTAT_DB_SELECT_URL, {
+        "type": "select",
+        "index": GASTAT_TOTAL_EXPORTS_INDEX,
+        "query": {"aggs": {
+            "by": {"rows": [{"uniqueName": "ENDU_EN"}], "cols": [{"uniqueName": "YEAR_MONTH"}]},
+            "values": [{"func": "sum", "field": {"uniqueName": "OBS_VALUE"}}],
+        }},
+        "page": 0,
+    })
+
+
+def extract_total_exports(payload: dict[str, Any], source_url: str) -> list[dict[str, Any]]:
+    if payload.get("pageTotal", 1) != 1:
+        raise ValueError("GASTAT exports response is paged; expected a single page.")
+    totals: dict[tuple[int, int], float] = {}
+    for item in payload.get("aggs", []):
+        keys = item.get("keys") or {}
+        if not keys.get("ENDU_EN") or not keys.get("YEAR_MONTH"):
+            continue  # subtotal and grand-total rows
+        match = re.fullmatch(r"\s*(\d{4})\s*/\s*(\d{1,2})\s*", str(keys["YEAR_MONTH"]))
+        value = ((item.get("values") or {}).get("OBS_VALUE") or {}).get("sum")
+        if not match or value is None:
+            raise ValueError(f"Unexpected GASTAT exports observation: {item}")
+        key = (int(match.group(1)), int(match.group(2)))
+        totals[key] = totals.get(key, 0.0) + value
+    if not totals:
+        raise ValueError("GASTAT exports response contained no monthly observations.")
+    return [
+        make_fact(
+            "KPI_12", year, month, total / 1_000_000, "SAR million",
+            "GASTAT Exports Value by End Use", source_url,
+            "Monthly total goods exports (sum of end-use categories), converted from SAR to SAR million.",
+        )
+        for (year, month), total in sorted(totals.items())
+    ]
+
+
+def fetch_gastat_end_use_imports() -> dict[str, Any]:
+    return post_json(GASTAT_DB_SELECT_URL, {
+        "type": "select",
+        "index": GASTAT_END_USE_INDEX,
+        "query": {"aggs": {
+            "by": {"rows": [{"uniqueName": "ENDU_EN"}], "cols": [{"uniqueName": "YEAR_MONTH"}]},
+            "values": [{"func": "sum", "field": {"uniqueName": "OBS_VALUE"}}],
+        }},
+        "page": 0,
+    })
+
+
+def fetch_gastat_exports() -> dict[str, Any]:
+    return post_json(GASTAT_DB_SELECT_URL, {
+        "type": "select",
+        "index": GASTAT_EXPORTS_INDEX,
+        "query": {"aggs": {
+            "by": {"rows": [{"uniqueName": "CP21_CHAPTER_CD"}], "cols": [{"uniqueName": "YEAR_MONTH"}]},
+            "values": [{"func": "sum", "field": {"uniqueName": "OBS_VALUE"}}],
+        }},
+        "page": 0,
+    })
+
+
+def extract_nonoil_exports(payload: dict[str, Any], source_url: str) -> list[dict[str, Any]]:
+    if payload.get("pageTotal", 1) != 1:
+        raise ValueError("GASTAT exports response is paged; expected a single page.")
+    totals: dict[str, float] = {}
+    oil: dict[str, float] = {}
+    for item in payload.get("aggs", []):
+        keys = item.get("keys") or {}
+        period = keys.get("YEAR_MONTH")
+        value = ((item.get("values") or {}).get("OBS_VALUE") or {}).get("sum")
+        if not period or value is None:
+            continue
+        chapter = keys.get("CP21_CHAPTER_CD")
+        if chapter is None:
+            totals[period] = value
+        elif chapter in OIL_CPC_CHAPTERS:
+            oil[period] = oil.get(period, 0.0) + value
+    facts = []
+    for period, total in totals.items():
+        match = re.fullmatch(r"\s*(\d{4})\s*/\s*(\d{1,2})\s*", str(period))
+        if not match:
+            raise ValueError(f"Unexpected GASTAT exports period: {period}")
+        facts.append(make_fact(
+            "KPI_08", int(match.group(1)), int(match.group(2)), (total - oil.get(period, 0.0)) / 1_000_000,
+            "SAR million", "GASTAT Exports Value by Central Product Classification (CPC2.1)", source_url,
+            "Total exports less CPC2.1 chapters 12 (crude petroleum and natural gas) and 33 (refined petroleum "
+            "products); includes re-exports. SAR converted to SAR million.",
+        ))
+    if not facts:
+        raise ValueError("GASTAT exports response contained no monthly observations.")
+    return sorted(facts, key=lambda fact: fact["PeriodStart"])
+
+
+def fetch_gastat_crude_oil_exports() -> dict[str, Any]:
+    return post_json(GASTAT_DB_SELECT_URL, {
+        "type": "select",
+        "index": GASTAT_CRUDE_INDEX,
+        "query": {
+            "aggs": {
+                "by": {
+                    "rows": [{"uniqueName": "CL_UNIT_GEN_EN"}, {"uniqueName": "PERIOD"}],
+                    "cols": [{"uniqueName": "CL_MONTHS_GEN_ORD"}],
+                },
+                "values": [{"func": "sum", "field": {"uniqueName": "OBS_VALUE"}}],
+            },
+            "filter": {"type": "and", "value": [
+                {"field": {"uniqueName": "CL_INDICATORS_OG_EN"}, "include": [{"member": "Crude Oil Exports"}]},
+            ]},
+        },
+        "page": 0,
+    })
+
+
+def extract_crude_oil_exports(payload: dict[str, Any], source_url: str) -> list[dict[str, Any]]:
+    if payload.get("pageTotal", 1) != 1:
+        raise ValueError("GASTAT crude oil response is paged; expected a single page.")
+    facts = []
+    for item in payload.get("aggs", []):
+        keys = item.get("keys") or {}
+        if keys.get("PERIOD") is None or keys.get("CL_MONTHS_GEN_ORD") is None:
+            continue  # yearly and grand-total rows
+        month = int(keys["CL_MONTHS_GEN_ORD"])
+        if not 1 <= month <= 12:
+            continue  # month ordinal 999 is the annual total
+        if keys.get("CL_UNIT_GEN_EN") != CRUDE_UNIT:
+            raise ValueError(f"Unexpected crude oil export unit: {keys.get('CL_UNIT_GEN_EN')!r}")
+        total = ((item.get("values") or {}).get("OBS_VALUE") or {}).get("sum")
+        if total is None:
+            continue
+        facts.append(make_fact(
+            "KPI_11", int(keys["PERIOD"]), month, total, "Thousand barrels",
+            "GASTAT Crude Oil Exports", source_url,
+            "Monthly crude oil export volume from the GASTAT oil and gas statistics.",
+        ))
+    if not facts:
+        raise ValueError("GASTAT crude oil response contained no monthly observations.")
+    return sorted(facts, key=lambda fact: fact["PeriodStart"])
+
+
+def extract_gfcf_imports(payload: dict[str, Any], source_url: str) -> list[dict[str, Any]]:
+    if payload.get("pageTotal", 1) != 1:
+        raise ValueError("GASTAT end-use response is paged; expected a single page.")
+    facts = []
+    for item in payload.get("aggs", []):
+        keys = item.get("keys") or {}
+        if keys.get("ENDU_EN") != GFCF_END_USE or not keys.get("YEAR_MONTH"):
+            continue
+        match = re.fullmatch(r"\s*(\d{4})\s*/\s*(\d{1,2})\s*", str(keys["YEAR_MONTH"]))
+        total = ((item.get("values") or {}).get("OBS_VALUE") or {}).get("sum")
+        if not match or total is None:
+            raise ValueError(f"Unexpected GASTAT end-use observation: {item}")
+        facts.append(make_fact(
+            "KPI_07", int(match.group(1)), int(match.group(2)), total / 1_000_000, "SAR million",
+            "GASTAT Imports Value by End Use - Gross Fixed Capital Formation", source_url,
+            "Monthly imports classified as Gross Fixed Capital Formation, converted from SAR to SAR million.",
+        ))
+    if not facts:
+        raise ValueError(f"GASTAT end-use response has no '{GFCF_END_USE}' observations.")
+    return sorted(facts, key=lambda fact: fact["PeriodStart"])
+
+
+def extract_imports_cpc(payload: dict[str, Any], source_url: str) -> list[dict[str, Any]]:
+    if payload.get("pageTotal", 1) != 1:
+        raise ValueError("GASTAT imports response is paged; expected a single page of monthly totals.")
+    facts = []
+    for item in payload.get("aggs", []):
+        period = (item.get("keys") or {}).get("YEAR_MONTH")
+        if not period:
+            continue  # grand-total row
+        match = re.fullmatch(r"\s*(\d{4})\s*/\s*(\d{1,2})\s*", str(period))
+        total = ((item.get("values") or {}).get("OBS_VALUE") or {}).get("sum")
+        if not match or total is None:
+            raise ValueError(f"Unexpected GASTAT imports observation: {item}")
+        year, month = int(match.group(1)), int(match.group(2))
+        facts.append(make_fact(
+            "KPI_05", year, month, total / 1_000_000, "SAR million",
+            "GASTAT Imports Value by Central Product Classification (CPC2.1)", source_url,
+            "Monthly sum of OBS_VALUE across all CPC2.1 sections, converted from SAR to SAR million.",
+        ))
+    if not facts:
+        raise ValueError("GASTAT imports response contained no monthly observations.")
+    return sorted(facts, key=lambda fact: fact["PeriodStart"])
 
 
 def make_quarter_fact(
@@ -952,48 +1238,6 @@ def extract_trade(content: bytes, source_url: str) -> dict[str, list[dict[str, A
     return result
 
 
-def extract_august(content: bytes, source_url: str) -> dict[str, dict[str, Any]]:
-    workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
-    sheet = workbook["1"]
-    row = next(
-        (
-            row for row in sheet.iter_rows(min_row=5, values_only=True)
-            if len(row) > 5 and str(row[2] or "").strip().lower() == "august"
-        ),
-        None,
-    )
-    workbook.close()
-    if row is None:
-        raise ValueError("August observation was not found in GASTAT table 1")
-    year = int(str(row[0]).replace("*", "").strip())
-    status = "Preliminary" if "*" in str(row[0]) else "Reported"
-    return {
-        "KPI_05": make_fact(
-            "KPI_05", year, 8, row[5], "SAR million",
-            "GASTAT non-oil trade workbook - monthly imports", source_url,
-            "Latest available month from the dedicated monthly workbook.", status,
-        ),
-        "KPI_08": make_fact(
-            "KPI_08", year, 8, row[3] + row[4], "SAR million",
-            "GASTAT non-oil trade workbook - non-oil exports and re-exports", source_url,
-            "National non-oil exports plus re-exports.", status,
-        ),
-        "KPI_08_Components": {
-            "CountryCode": "SAU",
-            "KPI_ID": "KPI_08",
-            "Year": year,
-            "Month": 8,
-            "MonthName": "August",
-            "National_NonOil_Exports_SAR_million": float(row[3]),
-            "ReExports_SAR_million": float(row[4]),
-            "KPI_Total_Including_ReExports_SAR_million": float(row[3] + row[4]),
-            "ObservationStatus": status,
-            "SourceTable": "GASTAT non-oil trade workbook, table 1",
-            "SourceURL": source_url,
-        },
-    }
-
-
 def extract_building_permits(content: bytes, source_url: str) -> list[dict[str, Any]]:
     workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
     result = []
@@ -1095,10 +1339,7 @@ class MartService:
         with self._lock:
             sources = dict(self._data["sources"])
             existing_facts = list(self._data["facts"])
-        source_url = {
-            kpi_id: sources.get(kpi_id, {}).get("ExtractedDataURL") or ""
-            for kpi_id in ("KPI_05", "KPI_07", "KPI_08", "KPI_11", "KPI_12", "KPI_13")
-        }
+        source_url = {"KPI_13": sources.get("KPI_13", {}).get("ExtractedDataURL") or ""}
         downloaded: dict[str, bytes] = {}
         errors: dict[str, str] = {}
         extracted: dict[str, list[dict[str, Any]]] = {}
@@ -1198,40 +1439,47 @@ class MartService:
         except (OSError, ValueError, KeyError, IndexError) as error:
             errors["KPI_03"] = str(error)
 
-        main_url = source_url["KPI_05"]
+        try:
+            extracted["KPI_11"] = extract_crude_oil_exports(fetch_gastat_crude_oil_exports(), GASTAT_CRUDE_REPORT_URL)
+            notes["KPI_11"] = "Extracted from the GASTAT database report Crude Oil Exports."
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            errors["KPI_11"] = str(error)
+
+        try:
+            extracted["KPI_05"] = extract_imports_cpc(fetch_gastat_imports(), GASTAT_IMPORTS_REPORT_URL)
+            notes["KPI_05"] = "Extracted from the GASTAT database report Imports Value by CPC2.1."
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            errors["KPI_05"] = str(error)
+
+        try:
+            extracted["KPI_07"] = extract_gfcf_imports(fetch_gastat_end_use_imports(), GASTAT_END_USE_REPORT_URL)
+            notes["KPI_07"] = "Extracted from the GASTAT database report Imports Value by End Use (Gross Fixed Capital Formation)."
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            errors["KPI_07"] = str(error)
+
+        try:
+            extracted["KPI_08"] = extract_nonoil_exports(fetch_gastat_exports(), GASTAT_EXPORTS_REPORT_URL)
+            notes["KPI_08"] = (
+                "Extracted from the GASTAT database report Exports Value by CPC2.1 "
+                "(total exports less CPC chapters 12 and 33)."
+            )
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            errors["KPI_08"] = str(error)
+
+        try:
+            extracted["KPI_12"] = extract_total_exports(fetch_gastat_total_exports(), GASTAT_TOTAL_EXPORTS_REPORT_URL)
+            notes["KPI_12"] = "Extracted from the GASTAT database report Exports Value by End Use."
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            errors["KPI_12"] = str(error)
+
+        # The national/re-export split is not in the database reports, so it stays on the ITR workbook.
         extracted_components: list[dict[str, Any]] = []
         try:
-            extracted.update(extract_trade(fetch(main_url), main_url))
-            extracted_components = extracted.get("KPI_08_Components", [])
-            for kpi_id in ("KPI_07", "KPI_11", "KPI_12"):
-                notes[kpi_id] = "Extracted from the configured official GASTAT ITR workbook."
-        except (OSError, ValueError, KeyError, IndexError) as error:
-            for kpi_id in ("KPI_05", "KPI_07", "KPI_11", "KPI_12"):
-                errors[kpi_id] = str(error)
+            trade = extract_trade(fetch(ITR_WORKBOOK_URL), ITR_WORKBOOK_URL)
+            extracted_components = list(trade.get("KPI_08_Components", []))
+        except (OSError, ValueError, KeyError, IndexError):
+            pass
 
-        august_url = source_url["KPI_08"]
-        try:
-            august = extract_august(fetch(august_url), august_url)
-            for kpi_id in ("KPI_05", "KPI_08"):
-                rows = extracted.get(kpi_id, [])
-                if rows and kpi_id not in errors:
-                    rows = [row for row in rows if row["PeriodStart"] != august[kpi_id]["PeriodStart"]]
-                    rows.append(august[kpi_id])
-                    extracted[kpi_id] = rows
-                    notes[kpi_id] = "Extracted from GASTAT ITR and the dedicated monthly trade workbook."
-                    if kpi_id == "KPI_08":
-                        extracted_components = [
-                            row for row in extracted_components if row["Month"] != 8 or row["Year"] != 2026
-                        ]
-                        extracted_components.append(august["KPI_08_Components"])
-                else:
-                    errors.setdefault(kpi_id, "Main GASTAT ITR report was not extracted; retained snapshot data.")
-        except (OSError, ValueError, KeyError, IndexError) as error:
-            for kpi_id in ("KPI_05", "KPI_08"):
-                if not extracted.get(kpi_id):
-                    errors[kpi_id] = str(error)
-                else:
-                    notes[kpi_id] = f"Dedicated latest-month workbook unavailable; main ITR data loaded. {error}"
 
         try:
             permits_url = source_url["KPI_13"]
@@ -1264,10 +1512,16 @@ class MartService:
             self._data["facts"] = [
                 row for row in existing_facts if row["KPI_ID"] not in successful
             ] + replacement_facts
-            if "KPI_07" in successful:
-                self._data["components"] = extracted.get("KPI_07_BEC", [])
             if "KPI_08" in successful and extracted_components:
                 self._data["kpi08_components"] = extracted_components
+            for kpi_id in DATABASE_REPORT_URLS:
+                if kpi_id in successful:
+                    periods = sorted(row["PeriodStart"][:7] for row in successful[kpi_id])
+                    self._data["sources"].setdefault(kpi_id, {"KPI_ID": kpi_id}).update({
+                        "ObservedFrom": periods[0],
+                        "ObservedTo": periods[-1],
+                        "ObservationCount": len(periods),
+                    })
             for item in self._data["catalog"]:
                 kpi_id = item["KPI_ID"]
                 if kpi_id == "KPI_10":

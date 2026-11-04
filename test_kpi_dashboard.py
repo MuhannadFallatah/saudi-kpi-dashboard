@@ -14,7 +14,12 @@ from publish_static import build_refresh_log
 from kpi_dashboard import (
     DashboardHandler,
     MartService,
+    extract_crude_oil_exports,
     extract_datasaudi_pmi,
+    extract_gfcf_imports,
+    extract_imports_cpc,
+    extract_nonoil_exports,
+    extract_total_exports,
     extract_datasaudi_private_lending,
     extract_datasaudi_saibor,
     extract_investing_cds,
@@ -24,6 +29,106 @@ from kpi_dashboard import (
     extract_yamama_cement,
     sama_pos_report_urls,
 )
+
+
+class GastatTotalExportsTests(unittest.TestCase):
+    def test_end_use_categories_are_summed_per_month(self) -> None:
+        def item(category, period, value):
+            return {"values": {"OBS_VALUE": {"sum": value}}, "keys": {"ENDU_EN": category, "YEAR_MONTH": period}}
+        payload = {"aggs": [item("Other", "2026 / 07", 1_000_000_000), item("Final Consumption", "2026 / 07", 2_000_000_000),
+                            {"values": {"OBS_VALUE": {"sum": 9}}, "keys": {"YEAR_MONTH": "2026 / 07"}}], "pageTotal": 1}
+        rows = extract_total_exports(payload, "u")
+        self.assertEqual([(r["PeriodStart"], r["Value"], r["KPI_ID"]) for r in rows], [("2026-07-01", 3000.0, "KPI_12")])
+
+
+class GastatCrudeOilTests(unittest.TestCase):
+    def test_only_monthly_rows_are_extracted(self) -> None:
+        def item(year, month, value, unit="Thousand Barrels"):
+            return {"values": {"OBS_VALUE": {"sum": value}},
+                    "keys": {"CL_UNIT_GEN_EN": unit, "PERIOD": year, "CL_MONTHS_GEN_ORD": month}}
+        payload = {"aggs": [item(2025, 12, 216628), item(2025, 999, 2347321), item(2025, 1, 5),
+                            {"values": {"OBS_VALUE": {"sum": 9}}, "keys": {"CL_UNIT_GEN_EN": "Thousand Barrels", "PERIOD": 2025}}],
+                   "pageTotal": 1}
+        rows = extract_crude_oil_exports(payload, "u")
+        self.assertEqual([(r["PeriodStart"], r["Value"]) for r in rows],
+                         [("2025-01-01", 5), ("2025-12-01", 216628)])
+
+    def test_unexpected_unit_is_rejected(self) -> None:
+        payload = {"aggs": [{"values": {"OBS_VALUE": {"sum": 1}},
+                             "keys": {"CL_UNIT_GEN_EN": "USD", "PERIOD": 2025, "CL_MONTHS_GEN_ORD": 1}}], "pageTotal": 1}
+        with self.assertRaises(ValueError):
+            extract_crude_oil_exports(payload, "u")
+
+
+class GastatNonOilExportsTests(unittest.TestCase):
+    def test_oil_chapters_are_deducted_from_total(self) -> None:
+        def item(chapter, period, value):
+            return {"values": {"OBS_VALUE": {"sum": value}}, "keys": {"CP21_CHAPTER_CD": chapter, "YEAR_MONTH": period}}
+        payload = {"aggs": [
+            item("12", "2026 / 07", 60_000_000_000), item("33", "2026 / 07", 10_000_000_000),
+            item("34", "2026 / 07", 8_000_000_000),
+            {"values": {"OBS_VALUE": {"sum": 100_000_000_000}}, "keys": {"YEAR_MONTH": "2026 / 07"}},
+            {"values": {"OBS_VALUE": {"sum": 5}}},
+        ], "pageTotal": 1}
+        rows = extract_nonoil_exports(payload, "u")
+        self.assertEqual([(r["PeriodStart"], r["Value"], r["KPI_ID"]) for r in rows],
+                         [("2026-07-01", 30000.0, "KPI_08")])
+
+    def test_empty_response_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            extract_nonoil_exports({"aggs": [], "pageTotal": 1}, "u")
+
+
+class GastatGfcfImportsTests(unittest.TestCase):
+    def test_only_gfcf_end_use_is_extracted(self) -> None:
+        def item(category, period, value):
+            return {"values": {"OBS_VALUE": {"sum": value}}, "keys": {"ENDU_EN": category, "YEAR_MONTH": period}}
+        payload = {"aggs": [
+            item("Gross Fixed Capital Formation", "2026 / 02", 10_000_000_000),
+            item("Final Consumption", "2026 / 02", 99_000_000_000),
+            item("Gross Fixed Capital Formation", "2026 / 01", 12_500_000_000),
+            {"values": {"OBS_VALUE": {"sum": 1}}},
+        ], "pageTotal": 1}
+        rows = extract_gfcf_imports(payload, "u")
+        self.assertEqual([(r["PeriodStart"], r["Value"], r["KPI_ID"]) for r in rows],
+                         [("2026-01-01", 12500.0, "KPI_07"), ("2026-02-01", 10000.0, "KPI_07")])
+
+    def test_missing_category_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            extract_gfcf_imports({"aggs": [], "pageTotal": 1}, "u")
+
+
+class GastatImportsTests(unittest.TestCase):
+    def test_monthly_totals_are_converted_to_sar_million_and_sorted(self) -> None:
+        payload = {"aggs": [
+            {"values": {"OBS_VALUE": {"sum": 2_500_000_000.0}}, "keys": {"YEAR_MONTH": "2026 / 02"}},
+            {"values": {"OBS_VALUE": {"sum": 1_000_000_000}}, "keys": {"YEAR_MONTH": "2025 / 12"}},
+            {"values": {"OBS_VALUE": {"sum": 3_500_000_000.0}}},
+        ], "page": 0, "pageTotal": 1}
+        rows = extract_imports_cpc(payload, "https://database.stats.gov.sa/x")
+        self.assertEqual([(r["PeriodStart"], r["Value"], r["KPI_ID"]) for r in rows],
+                         [("2025-12-01", 1000.0, "KPI_05"), ("2026-02-01", 2500.0, "KPI_05")])
+
+    def test_empty_or_paged_response_is_rejected(self) -> None:
+        with self.assertRaises(ValueError):
+            extract_imports_cpc({"aggs": [], "pageTotal": 1}, "u")
+        with self.assertRaises(ValueError):
+            extract_imports_cpc({"aggs": [], "pageTotal": 2}, "u")
+
+
+def mof_workbook(title: str, capex_values: list[float]) -> bytes:
+    workbook = Workbook()
+    stale = workbook.active
+    stale.title = "Expenditures"
+    stale.append(["x", "Actual expenditures in Q1 of FY 2023"])
+    stale.append(["الأصول", 1.0, "Non-financial Assets (CAPEX)"])
+    sheet = workbook.create_sheet("Expenditures ")
+    sheet.append(["المصروفات", "Expenditures"])
+    sheet.append([None, title])
+    sheet.append(["الأصول", *capex_values, "Non-financial Assets (CAPEX)"])
+    buffer = BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
 
 
 class RefreshLogTests(unittest.TestCase):
