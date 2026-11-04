@@ -1,0 +1,172 @@
+{
+  "generatedAt": "2026-10-29T13:59:01+03:00",
+  "lastRefresh": "2026-10-29T13:58:32+03:00",
+  "lastError": null,
+  "summary": {
+    "kpiCount": 16,
+    "successCount": 11,
+    "failedCount": 5
+  },
+  "entries": [
+    {
+      "timestamp": "2026-10-29T13:58:32+03:00",
+      "kpiId": "KPI_01",
+      "kpiName": "Purchasing Managers' Index (PMI)",
+      "status": "green",
+      "label": "Live extraction succeeded",
+      "observationCount": 206,
+      "latestObservation": "2026-09-30",
+      "detail": "Extracted from DataSaudi's public PMI monthly data endpoint; the series is attributed to Riyad Bank and links the S&P Global PMI release archive."
+    },
+    {
+      "timestamp": "2026-10-29T13:58:32+03:00",
+      "kpiId": "KPI_02",
+      "kpiName": "Point-of-sale transactions (POS)",
+      "status": "green",
+      "label": "Live extraction succeeded",
+      "observationCount": 26,
+      "latestObservation": "2026-10-24",
+      "detail": "Extracted the weekly total transaction count and value from SAMA POS reports; both measures are retained as separate observations. Source page: https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/POS.aspx"
+    },
+    {
+      "timestamp": "2026-10-29T13:58:32+03:00",
+      "kpiId": "KPI_03",
+      "kpiName": "Cement sales",
+      "status": "green",
+      "label": "Live extraction succeeded",
+      "observationCount": 201,
+      "latestObservation": "2026-09-30",
+      "detail": "Extracted monthly total cement sales from Yamama Cement's company-level report; the latest available month is cross-checked against Argaam's Saudi-wide report."
+    },
+    {
+      "timestamp": "2026-10-29T13:58:32+03:00",
+      "kpiId": "KPI_04",
+      "kpiName": "Private-sector bank credit (12a)",
+      "status": "green",
+      "label": "Live extraction succeeded",
+      "observationCount": 404,
+      "latestObservation": "2026-08-31",
+      "detail": "Extracted DataSaudi's monthly Grand Total for banks' claims on the private sector, sourced to SAMA; unit is SAR million."
+    },
+    {
+      "timestamp": "2026-10-29T13:58:32+03:00",
+      "kpiId": "KPI_05",
+      "kpiName": "Total goods imports",
+      "status": "green",
+      "label": "Live extraction succeeded",
+      "observationCount": 116,
+      "latestObservation": "2026-08-31",
+      "detail": "Extracted from GASTAT ITR and the dedicated monthly trade workbook."
+    },
+    {
+      "timestamp": "2026-10-29T13:58:32+03:00",
+      "kpiId": "KPI_06",
+      "kpiName": "Private-sector imports",
+      "status": "red",
+      "label": "No live connector configured",
+      "observationCount": 0,
+      "latestObservation": null,
+      "detail": "No verified automated provider connector is available for this KPI."
+    },
+    {
+      "timestamp": "2026-10-29T13:58:32+03:00",
+      "kpiId": "KPI_07",
+      "kpiName": "Capital imports",
+      "status": "green",
+      "label": "Live extraction succeeded",
+      "observationCount": 19,
+      "latestObservation": "2026-07-31",
+      "detail": "Extracted from the configured official GASTAT ITR workbook."
+    },
+    {
+      "timestamp": "2026-10-29T13:58:32+03:00",
+      "kpiId": "KPI_08",
+      "kpiName": "Non-oil exports including re-exports",
+      "status": "green",
+      "label": "Live extraction succeeded",
+      "observationCount": 116,
+      "latestObservation": "2026-08-31",
+      "detail": "Extracted from GASTAT ITR and the dedicated monthly trade workbook."
+    },
+    {
+      "timestamp": "2026-10-29T13:58:32+03:00",
+      "kpiId": "KPI_09",
+      "kpiName": "Monthly average SAIBOR",
+      "status": "red",
+      "label": "No live connector configured",
+      "observationCount": 0,
+      "latestObservation": null,
+      "detail": "No verified automated provider connector is available for this KPI."
+    },
+    {
+      "timestamp": "2026-10-29T13:58:32+03:00",
+      "kpiId": "KPI_10",
+      "kpiName": "Investment licences",
+      "status": "red",
+      "label": "Excluded by request",
+      "observationCount": 0,
+      "latestObservation": null,
+      "detail": "MISA extraction remains excluded per user instruction."
+    },
+    {
+      "timestamp": "2026-10-29T13:58:32+03:00",
+      "kpiId": "KPI_11",
+      "kpiName": "Oil exports",
+      "status": "green",
+      "label": "Live extraction succeeded",
+      "observationCount": 115,
+      "latestObservation": "2026-07-31",
+      "detail": "Extracted from the configured official GASTAT ITR workbook."
+    },
+    {
+      "timestamp": "2026-10-29T13:58:32+03:00",
+      "kpiId": "KPI_12",
+      "kpiName": "Goods exports",
+      "status": "green",
+      "label": "Live extraction succeeded",
+      "observationCount": 115,
+      "latestObservation": "2026-07-31",
+      "detail": "Extracted from the configured official GASTAT ITR workbook."
+    },
+    {
+      "timestamp": "2026-10-29T13:58:32+03:00",
+      "kpiId": "KPI_13",
+      "kpiName": "Issued building permits",
+      "status": "green",
+      "label": "Live extraction succeeded",
+      "observationCount": 43,
+      "latestObservation": "2026-07-31",
+      "detail": "Extracted from the configured official GASTAT STS workbook."
+    },
+    {
+      "timestamp": "2026-10-29T13:58:32+03:00",
+      "kpiId": "KPI_14",
+      "kpiName": "Credit default swap (CDS) spreads",
+      "status": "red",
+      "label": "No live connector configured",
+      "observationCount": 0,
+      "latestObservation": null,
+      "detail": "No verified automated provider connector is available for this KPI."
+    },
+    {
+      "timestamp": "2026-10-29T13:58:32+03:00",
+      "kpiId": "KPI_15",
+      "kpiName": "Tadawul All Share Index (TASI)",
+      "status": "red",
+      "label": "No live connector configured",
+      "observationCount": 21,
+      "latestObservation": "2026-10-21T00:00:00",
+      "detail": "No verified automated provider connector is available for this KPI."
+    },
+    {
+      "timestamp": "2026-10-29T13:58:32+03:00",
+      "kpiId": "KPI_16",
+      "kpiName": "Government capital expenditure",
+      "status": "green",
+      "label": "Live extraction succeeded",
+      "observationCount": 18,
+      "latestObservation": "2026-06-30",
+      "detail": "Extracted from the latest MOF quarterly budget performance report of each fiscal year."
+    }
+  ]
+}

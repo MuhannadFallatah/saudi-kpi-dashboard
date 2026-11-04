@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Refresh Logs | Saudi KPI Data Monitor</title>
+<style>
+:root{font-family:Segoe UI,Arial,sans-serif;color:#172337;background:#f3f6fb}
+*{box-sizing:border-box}body{margin:0}.top{background:#102844;color:#fff;padding:24px max(22px,calc((100vw - 1200px)/2))}
+.top h1{margin:0;font-size:25px}.top p{margin:8px 0 0;color:#cbd6e2}.wrap{max-width:1200px;margin:24px auto;padding:0 20px}
+.toolbar{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0;align-items:center}.btn{border:0;border-radius:8px;padding:10px 14px;font-weight:650;background:#1670d2;color:#fff;text-decoration:none;cursor:pointer}
+.btn.secondary{background:#e8eef5;color:#18324f}.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0}
+.stat,.tablebox,.alert{background:#fff;border:1px solid #e1e8f0;border-radius:12px}.stat{padding:16px}.stat small{color:#66758a}.stat strong{display:block;font-size:23px;margin-top:6px}
+.tablebox{overflow:auto}table{width:100%;border-collapse:collapse;min-width:800px}th,td{text-align:left;padding:12px 13px;border-bottom:1px solid #edf1f5;vertical-align:top}
+th{font-size:12px;text-transform:uppercase;color:#65758a;background:#f8fafc;position:sticky;top:0}td{font-size:13px}
+.status{display:inline-flex;align-items:center;gap:7px;font-weight:700;white-space:nowrap}.dot{height:10px;width:10px;border-radius:50%;display:inline-block}
+.green .dot{background:#168344}.red .dot{background:#d53b3b}.muted,.foot{color:#758398}.alert{padding:13px 15px;margin:16px 0;color:#812b2b;border-color:#efcccc;background:#fff5f5;white-space:pre-wrap}
+.filters{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}.filters input,.filters select{padding:10px 12px;border:1px solid #ccd7e4;border-radius:8px;background:#fff;color:#172337}
+.filters input{flex:1;min-width:220px}.foot{font-size:12px;margin:14px 2px;line-height:1.5}#message{margin-left:auto;color:#40536b}
+@media(max-width:700px){.stats{grid-template-columns:1fr}.top h1{font-size:21px}}
+</style>
+</head>
+<body>
+<header class="top">
+<h1>Refresh Logs</h1>
+<p>Latest published extraction result for each KPI</p>
+</header>
+<main class="wrap">
+<div id="notice" class="stat">Loading refresh log…</div>
+<div id="runError" class="alert" hidden></div>
+<div class="toolbar">
+<a class="btn secondary" href="./">Back to dashboard</a>
+<a class="btn secondary" href="data/refresh-logs.json">Log JSON</a>
+<button class="btn" id="reloadBtn" type="button">Reload logs</button>
+<span id="message" aria-live="polite"></span>
+</div>
+<section class="stats" aria-label="Refresh summary">
+<div class="stat"><small>KPIs checked</small><strong id="kpiCount">—</strong></div>
+<div class="stat"><small>Successful</small><strong id="successCount">—</strong></div>
+<div class="stat"><small>Failed or unavailable</small><strong id="failedCount">—</strong></div>
+</section>
+<div class="filters">
+<input id="search" type="search" placeholder="Search KPI or log details" aria-label="Search refresh log">
+<select id="statusFilter" aria-label="Filter by status">
+<option value="all">All results</option><option value="green">Successful</option><option value="red">Failed or unavailable</option>
+</select>
+</div>
+<div class="tablebox">
+<table><thead><tr><th>Checked (Riyadh)</th><th>KPI</th><th>Status</th><th>Observations</th><th>Latest data</th><th>Details</th></tr></thead>
+<tbody id="rows"></tbody></table>
+</div>
+<p class="foot">This static page displays the most recently published refresh results, not the full GitHub Actions console output or historical run archive. A new deployment replaces this log with the latest result. Red includes failed extraction, unavailable connector, and intentional exclusion.</p>
+</main>
+<script>
+let entries=[];
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function ksa(v){
+ if(!v)return '—';
+ const d=new Date(v);
+ return isNaN(d)?String(v):d.toLocaleString('en-GB',{timeZone:'Asia/Riyadh',year:'numeric',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:true}).replace(/\b(am|pm)\b/i,m=>m.toUpperCase());
+}
+function render(){
+ const term=document.getElementById('search').value.trim().toLowerCase();
+ const filter=document.getElementById('statusFilter').value;
+ const shown=entries.filter(e=>(filter==='all'||e.status===filter)&&(!term||[e.kpiId,e.kpiName,e.label,e.detail].some(v=>String(v??'').toLowerCase().includes(term))));
+ document.getElementById('rows').innerHTML=shown.length?shown.map(e=>`<tr>
+ <td>${esc(ksa(e.timestamp))}</td><td><strong>${esc(e.kpiId)}</strong><br>${esc(e.kpiName)}</td>
+ <td><span class="status ${e.status==='green'?'green':'red'}"><i class="dot"></i>${esc(e.label)}</span></td>
+ <td>${Number(e.observationCount||0).toLocaleString()}</td><td>${esc(e.latestObservation||'—')}</td><td>${esc(e.detail||'No extraction details')}</td>
+ </tr>`).join(''):'<tr><td colspan="6">No matching log entries.</td></tr>';
+}
+async function load(){
+ const r=await fetch('data/refresh-logs.json?t='+Date.now(),{cache:'no-store'});
+ if(!r.ok)throw new Error('Refresh log unavailable (HTTP '+r.status+').');
+ const d=await r.json();
+ entries=Array.isArray(d.entries)?d.entries:[];
+ document.getElementById('notice').textContent='Last refresh: '+ksa(d.lastRefresh)+' · Log generated: '+ksa(d.generatedAt);
+ document.getElementById('kpiCount').textContent=d.summary?.kpiCount??entries.length;
+ document.getElementById('successCount').textContent=d.summary?.successCount??entries.filter(e=>e.status==='green').length;
+ document.getElementById('failedCount').textContent=d.summary?.failedCount??entries.filter(e=>e.status!=='green').length;
+ const error=document.getElementById('runError');
+ if(d.lastError){error.hidden=false;error.textContent='Refresh-level error: '+d.lastError}else{error.hidden=true;error.textContent=''}
+ render();
+}
+document.getElementById('reloadBtn').onclick=async function(){
+ const btn=this,msg=document.getElementById('message');btn.disabled=true;msg.textContent='Loading…';
+ try{await load();msg.textContent='Log reloaded.'}catch(e){msg.textContent=e.message}
+ finally{btn.disabled=false}
+};
+document.getElementById('search').addEventListener('input',render);
+document.getElementById('statusFilter').addEventListener('change',render);
+load().catch(e=>{document.getElementById('notice').textContent=e.message});
+</script>
+</body>
+</html>

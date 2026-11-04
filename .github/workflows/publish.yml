@@ -9,6 +9,7 @@ on:
     paths:
       - ".github/workflows/publish.yml"
       - "docs/index.html"
+      - "docs/logs.html"
       - "kpi_dashboard.py"
       - "publish_static.py"
       - "requirements.txt"

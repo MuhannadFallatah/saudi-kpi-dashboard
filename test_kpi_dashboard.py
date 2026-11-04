@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 
 from openpyxl import Workbook, load_workbook
 
+from publish_static import build_refresh_log
 from kpi_dashboard import (
     DashboardHandler,
     MartService,
@@ -23,6 +24,41 @@ from kpi_dashboard import (
     extract_yamama_cement,
     sama_pos_report_urls,
 )
+
+
+class RefreshLogTests(unittest.TestCase):
+    def test_builds_summary_and_entries_from_latest_snapshot(self) -> None:
+        log = build_refresh_log(
+            {
+                "lastRefresh": "2026-11-04T08:00:00+03:00",
+                "lastError": None,
+                "kpis": [
+                    {
+                        "id": "KPI_01",
+                        "name": "PMI",
+                        "refreshStatus": "green",
+                        "refreshLabel": "Live extraction succeeded",
+                        "observationCount": 12,
+                        "latestObservation": "2026-10-31",
+                        "refreshNote": "Extracted successfully",
+                        "lastChecked": "2026-11-04T08:00:00+03:00",
+                    },
+                    {
+                        "id": "KPI_02",
+                        "name": "POS",
+                        "refreshStatus": "red",
+                        "refreshLabel": "Live extraction failed",
+                        "observationCount": 0,
+                        "refreshNote": "Source timed out",
+                    },
+                ],
+            },
+            "2026-11-04T08:01:00+03:00",
+        )
+        self.assertEqual(log["summary"], {"kpiCount": 2, "successCount": 1, "failedCount": 1})
+        self.assertEqual(log["entries"][0]["timestamp"], "2026-11-04T08:00:00+03:00")
+        self.assertEqual(log["entries"][1]["detail"], "Source timed out")
+        self.assertEqual(log["entries"][1]["timestamp"], "2026-11-04T08:00:00+03:00")
 
 
 def mof_workbook(title: str, capex_values: list[float]) -> bytes:

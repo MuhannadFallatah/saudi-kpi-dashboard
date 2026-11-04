@@ -5,6 +5,7 @@ import json
 import os
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from kpi_dashboard import MartService, RIYADH_TZ, WORKBOOK_PATH
 
@@ -22,6 +23,34 @@ def write_json(path: Path, payload: object) -> None:
         encoding="utf-8",
     )
     temporary.replace(path)
+
+
+def build_refresh_log(snapshot: dict[str, Any], generated_at: str) -> dict[str, Any]:
+    kpis = snapshot.get("kpis", [])
+    entries = [
+        {
+            "timestamp": kpi.get("lastChecked") or snapshot.get("lastRefresh") or generated_at,
+            "kpiId": kpi.get("id"),
+            "kpiName": kpi.get("name"),
+            "status": kpi.get("refreshStatus", "red"),
+            "label": kpi.get("refreshLabel", "Unknown"),
+            "observationCount": kpi.get("observationCount", 0),
+            "latestObservation": kpi.get("latestObservation"),
+            "detail": kpi.get("refreshNote") or kpi.get("extractionStatus") or "No extraction details",
+        }
+        for kpi in kpis
+    ]
+    return {
+        "generatedAt": generated_at,
+        "lastRefresh": snapshot.get("lastRefresh") or generated_at,
+        "lastError": snapshot.get("lastError"),
+        "summary": {
+            "kpiCount": len(entries),
+            "successCount": sum(entry["status"] == "green" for entry in entries),
+            "failedCount": sum(entry["status"] != "green" for entry in entries),
+        },
+        "entries": entries,
+    }
 
 
 def main() -> None:
@@ -45,6 +74,7 @@ def main() -> None:
     }
 
     write_json(DATA / "status.json", status)
+    write_json(DATA / "refresh-logs.json", build_refresh_log(status, generated_at))
     write_json(DATA / "facts.json", {"count": snapshot["factCount"], "data": service.facts_for()})
 
     kpi_dir = DATA / "kpi"

@@ -65,6 +65,7 @@ SAMA reports both count (thousand transactions) and value (SAR thousand).
 The original fixed URLs in the mart are used for GASTAT KPIs. The exporter produces:
 
 - `docs/data/status.json`
+- `docs/data/refresh-logs.json` (latest result per KPI; see `docs/logs.html`)
 - `docs/data/facts.json`
 - `docs/data/kpi/KPI_01.json` through `KPI_16.json` and `docs/data/kpi/index.json`
 - `docs/data/Saudi_KPI_Extract.xlsx`
