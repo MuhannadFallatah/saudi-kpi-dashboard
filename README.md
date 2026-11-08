@@ -41,8 +41,10 @@ tenor is not specified by the source), and KPI 14 (Investing.com daily Saudi
 5-year USD CDS close; the page exposes only about one month, so history
 accumulates from earlier published refreshes, and the site may block runners),
 and KPI 15 (DataSaudi's monthly Tadawul All Share Index level; monthly, not daily).
-KPIs 05, 07, 08, 11, 12 and 13 use GASTAT workbooks (fixed URLs), and KPI 16
-uses Ministry of Finance quarterly
+KPIs 05, 07, 08, 11 and 12 use GASTAT monthly trade database reports; KPI 08
+is linked to GASTAT's [monthly goods-trade statistics page](https://www.stats.gov.sa/ar/statistics-tabs?tab=436312&category=123481)
+and extracted from the underlying CPC2.1 exports report. KPI 13 uses a GASTAT
+workbook (fixed URL), and KPI 16 uses Ministry of Finance quarterly
 budget performance reports, "Non-financial Assets (CAPEX)", quarterly from
 2022; the latest report per fiscal year is discovered from the MOF year
 pages).

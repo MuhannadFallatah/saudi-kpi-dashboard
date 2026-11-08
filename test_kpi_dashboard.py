@@ -14,6 +14,9 @@ from publish_static import build_refresh_log
 from kpi_dashboard import (
     DashboardHandler,
     MartService,
+    GASTAT_EXPORTS_REPORT_URL,
+    GASTAT_KPI08_SOURCE_PAGE,
+    apply_database_report_sources,
     extract_crude_oil_exports,
     extract_datasaudi_pmi,
     extract_gfcf_imports,
@@ -61,6 +64,14 @@ class GastatCrudeOilTests(unittest.TestCase):
 
 
 class GastatNonOilExportsTests(unittest.TestCase):
+    def test_source_page_is_reported_separately_from_extraction_route(self) -> None:
+        catalog = [{"KPI_ID": "KPI_08"}]
+        sources = {}
+        apply_database_report_sources(catalog, sources)
+        self.assertEqual(catalog[0]["SourceURL"], GASTAT_KPI08_SOURCE_PAGE)
+        self.assertEqual(sources["KPI_08"]["PrimarySourceURL"], GASTAT_KPI08_SOURCE_PAGE)
+        self.assertEqual(sources["KPI_08"]["ExtractedDataURL"], GASTAT_EXPORTS_REPORT_URL)
+
     def test_oil_chapters_are_deducted_from_total(self) -> None:
         def item(chapter, period, value):
             return {"values": {"OBS_VALUE": {"sum": value}}, "keys": {"CP21_CHAPTER_CD": chapter, "YEAR_MONTH": period}}

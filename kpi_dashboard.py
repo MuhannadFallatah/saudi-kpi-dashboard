@@ -60,6 +60,9 @@ GASTAT_EXPORTS_REPORT_URL = (
     "https://database.stats.gov.sa/Build_Reports/main/home/build-report?reportData=9516299&fetchSavedSlice=true"
 )
 GASTAT_EXPORTS_INDEX = "DPV_EXP_CP21_EFFT010101"
+GASTAT_KPI08_SOURCE_PAGE = (
+    "https://www.stats.gov.sa/ar/statistics-tabs?tab=436312&category=123481"
+)
 OIL_CPC_CHAPTERS = {"12", "33"}
 GASTAT_CRUDE_REPORT_URL = (
     "https://database.stats.gov.sa/Build_Reports/main/home/build-report?reportData=9515243&fetchSavedSlice=true"
@@ -81,14 +84,18 @@ DATABASE_REPORT_URLS = {
     "KPI_11": GASTAT_CRUDE_REPORT_URL,
     "KPI_12": GASTAT_TOTAL_EXPORTS_REPORT_URL,
 }
+DATABASE_SOURCE_PAGE_URLS = {
+    "KPI_08": GASTAT_KPI08_SOURCE_PAGE,
+}
 DATABASE_REPORT_NOTES = {
     "KPI_12": "GASTAT database report 'Exports Value by End Use': monthly sum of all end-use categories "
               "(total goods exports), SAR million.",
     "KPI_05": "GASTAT database report 'Imports Value by Central Product Classification (CPC2.1)': "
               "monthly sum of all sections, SAR million.",
     "KPI_07": "GASTAT database report 'Imports Value by End Use': Gross Fixed Capital Formation, SAR million.",
-    "KPI_08": "GASTAT database report 'Exports Value by Central Product Classification (CPC2.1)': "
-              "total exports less CPC chapters 12 and 33 (non-oil including re-exports), SAR million.",
+    "KPI_08": "GASTAT monthly goods-trade statistics page; extracted from the underlying database report "
+              "'Exports Value by Central Product Classification (CPC2.1)' as total exports less CPC chapters "
+              "12 and 33 (non-oil including re-exports), SAR million.",
     "KPI_11": "GASTAT database report 'Crude Oil Exports': monthly crude oil export volume, thousand barrels.",
 }
 
@@ -285,23 +292,24 @@ def download_bytes(url: str) -> bytes:
 
 
 def apply_database_report_sources(catalog: list[dict[str, Any]], sources: dict[str, dict[str, Any]]) -> None:
-    # KPIs 05, 07 and 08 are fed from GASTAT database reports; replace the workbook's older source metadata.
+    # KPIs 05, 07 and 08 are extracted from GASTAT database reports.
     for item in catalog:
         kpi_id = item.get("KPI_ID")
         url = DATABASE_REPORT_URLS.get(kpi_id)
         if not url:
             continue
+        source_page_url = DATABASE_SOURCE_PAGE_URLS.get(kpi_id, url)
         note = DATABASE_REPORT_NOTES[kpi_id]
         item.update({
-            "SourceURL": url,
+            "SourceURL": source_page_url,
             "API_or_DataRoute": f"GASTAT database report (Build Reports API): {url}",
-            "VerifiedData_or_API_ReferenceURL": url,
+            "VerifiedData_or_API_ReferenceURL": source_page_url,
             "Access_Caveat": None,
             "ExtractionNote": note,
         })
         source = sources.setdefault(kpi_id, {"KPI_ID": kpi_id})
         source.update({
-            "PrimarySourceURL": url,
+            "PrimarySourceURL": source_page_url,
             "ExtractedDataURL": url,
             "ExtractionStatus": "Extracted",
             "ExtractionNote": note,
@@ -1458,10 +1466,12 @@ class MartService:
             errors["KPI_07"] = str(error)
 
         try:
-            extracted["KPI_08"] = extract_nonoil_exports(fetch_gastat_exports(), GASTAT_EXPORTS_REPORT_URL)
+            extracted["KPI_08"] = extract_nonoil_exports(
+                fetch_gastat_exports(), GASTAT_KPI08_SOURCE_PAGE
+            )
             notes["KPI_08"] = (
-                "Extracted from the GASTAT database report Exports Value by CPC2.1 "
-                "(total exports less CPC chapters 12 and 33)."
+                "GASTAT monthly goods-trade statistics page; extracted from its underlying Exports Value by "
+                "CPC2.1 database report (total exports less CPC chapters 12 and 33)."
             )
         except (OSError, ValueError, KeyError, IndexError) as error:
             errors["KPI_08"] = str(error)
