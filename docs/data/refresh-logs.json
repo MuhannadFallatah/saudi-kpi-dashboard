@@ -1,15 +1,15 @@
 {
-  "generatedAt": "2026-11-04T15:12:00+03:00",
-  "lastRefresh": "2026-11-04T15:11:26+03:00",
+  "generatedAt": "2026-11-08T14:00:44+03:00",
+  "lastRefresh": "2026-11-08T14:00:16+03:00",
   "lastError": null,
   "summary": {
     "kpiCount": 16,
-    "successCount": 12,
-    "failedCount": 4
+    "successCount": 13,
+    "failedCount": 3
   },
   "entries": [
     {
-      "timestamp": "2026-11-04T15:11:26+03:00",
+      "timestamp": "2026-11-08T14:00:16+03:00",
       "kpiId": "KPI_01",
       "kpiName": "Purchasing Managers' Index (PMI)",
       "status": "green",
@@ -19,7 +19,7 @@
       "detail": "Extracted from DataSaudi's public PMI monthly data endpoint; the series is attributed to Riyad Bank and links the S&P Global PMI release archive."
     },
     {
-      "timestamp": "2026-11-04T15:11:26+03:00",
+      "timestamp": "2026-11-08T14:00:16+03:00",
       "kpiId": "KPI_02",
       "kpiName": "Point-of-sale transactions (POS)",
       "status": "green",
@@ -29,17 +29,17 @@
       "detail": "Extracted the weekly total transaction count and value from SAMA POS reports; both measures are retained as separate observations. Source page: https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/POS.aspx"
     },
     {
-      "timestamp": "2026-11-04T15:11:26+03:00",
+      "timestamp": "2026-11-08T14:00:16+03:00",
       "kpiId": "KPI_03",
       "kpiName": "Cement sales",
       "status": "green",
       "label": "Live extraction succeeded",
-      "observationCount": 201,
-      "latestObservation": "2026-09-30",
+      "observationCount": 202,
+      "latestObservation": "2026-10-31",
       "detail": "Extracted monthly total cement sales from Yamama Cement's company-level report; the latest available month is cross-checked against Argaam's Saudi-wide report."
     },
     {
-      "timestamp": "2026-11-04T15:11:26+03:00",
+      "timestamp": "2026-11-08T14:00:16+03:00",
       "kpiId": "KPI_04",
       "kpiName": "Private-sector bank credit (12a)",
       "status": "green",
@@ -49,7 +49,7 @@
       "detail": "Extracted DataSaudi's monthly Grand Total for banks' claims on the private sector, sourced to SAMA; unit is SAR million."
     },
     {
-      "timestamp": "2026-11-04T15:11:26+03:00",
+      "timestamp": "2026-11-08T14:00:16+03:00",
       "kpiId": "KPI_05",
       "kpiName": "Total goods imports",
       "status": "green",
@@ -59,7 +59,7 @@
       "detail": "Extracted from the GASTAT database report Imports Value by CPC2.1."
     },
     {
-      "timestamp": "2026-11-04T15:11:26+03:00",
+      "timestamp": "2026-11-08T14:00:16+03:00",
       "kpiId": "KPI_06",
       "kpiName": "Private-sector imports",
       "status": "red",
@@ -69,7 +69,7 @@
       "detail": "No verified automated provider connector is available for this KPI."
     },
     {
-      "timestamp": "2026-11-04T15:11:26+03:00",
+      "timestamp": "2026-11-08T14:00:16+03:00",
       "kpiId": "KPI_07",
       "kpiName": "Capital imports",
       "status": "green",
@@ -79,17 +79,17 @@
       "detail": "Extracted from the GASTAT database report Imports Value by End Use (Gross Fixed Capital Formation)."
     },
     {
-      "timestamp": "2026-11-04T15:11:26+03:00",
+      "timestamp": "2026-11-08T14:00:16+03:00",
       "kpiId": "KPI_08",
       "kpiName": "Non-oil exports including re-exports",
       "status": "green",
       "label": "Live extraction succeeded",
-      "observationCount": 140,
+      "observationCount": 116,
       "latestObservation": "2026-08-31",
-      "detail": "Extracted from the GASTAT database report Exports Value by CPC2.1 (total exports less CPC chapters 12 and 33)."
+      "detail": "Extracted from the newest monthly GASTAT ITR workbook linked on the GASTAT goods-trade statistics page (table 1.2: national non-oil exports plus re-exports), SAR million."
     },
     {
-      "timestamp": "2026-11-04T15:11:26+03:00",
+      "timestamp": "2026-11-08T14:00:16+03:00",
       "kpiId": "KPI_09",
       "kpiName": "Monthly average SAIBOR",
       "status": "green",
@@ -99,7 +99,7 @@
       "detail": "Extracted DataSaudi's monthly Saudi Interbank Offered Rate (source: SAMA, https://www.sama.gov.sa/en-US/Statistics/Pages/MonthlyStatistics.aspx); unit is percent."
     },
     {
-      "timestamp": "2026-11-04T15:11:26+03:00",
+      "timestamp": "2026-11-08T14:00:16+03:00",
       "kpiId": "KPI_10",
       "kpiName": "Investment licences",
       "status": "red",
@@ -109,17 +109,17 @@
       "detail": "MISA extraction remains excluded per user instruction."
     },
     {
-      "timestamp": "2026-11-04T15:11:26+03:00",
+      "timestamp": "2026-11-08T14:00:16+03:00",
       "kpiId": "KPI_11",
       "kpiName": "Oil exports",
       "status": "green",
       "label": "Live extraction succeeded",
-      "observationCount": 192,
-      "latestObservation": "2025-12-31",
-      "detail": "Extracted from the GASTAT database report Crude Oil Exports."
+      "observationCount": 116,
+      "latestObservation": "2026-08-31",
+      "detail": "Extracted from the newest monthly GASTAT ITR workbook linked on the GASTAT goods-trade statistics page (table 1.2: oil exports value), SAR million; starred observations are preliminary."
     },
     {
-      "timestamp": "2026-11-04T15:11:26+03:00",
+      "timestamp": "2026-11-08T14:00:16+03:00",
       "kpiId": "KPI_12",
       "kpiName": "Goods exports",
       "status": "green",
@@ -129,27 +129,27 @@
       "detail": "Extracted from the GASTAT database report Exports Value by End Use."
     },
     {
-      "timestamp": "2026-11-04T15:11:26+03:00",
+      "timestamp": "2026-11-08T14:00:16+03:00",
       "kpiId": "KPI_13",
       "kpiName": "Issued building permits",
       "status": "green",
       "label": "Live extraction succeeded",
-      "observationCount": 43,
-      "latestObservation": "2026-07-31",
-      "detail": "Extracted from the configured official GASTAT STS workbook."
+      "observationCount": 44,
+      "latestObservation": "2026-08-31",
+      "detail": "Extracted from the newest monthly GASTAT STS workbook linked on the statistics page."
     },
     {
-      "timestamp": "2026-11-04T15:11:26+03:00",
+      "timestamp": "2026-11-08T14:00:16+03:00",
       "kpiId": "KPI_14",
       "kpiName": "Credit default swap (CDS) spreads",
       "status": "red",
       "label": "Live extraction failed",
-      "observationCount": 0,
-      "latestObservation": null,
+      "observationCount": 460,
+      "latestObservation": "2026-11-04T00:00:00",
       "detail": "HTTP Error 403: Forbidden"
     },
     {
-      "timestamp": "2026-11-04T15:11:26+03:00",
+      "timestamp": "2026-11-08T14:00:16+03:00",
       "kpiId": "KPI_15",
       "kpiName": "Tadawul All Share Index (TASI)",
       "status": "green",
@@ -159,14 +159,14 @@
       "detail": "Extracted DataSaudi's monthly Tadawul All Share Index level (Tadawul Indicators table, 'Index' indicator); monthly rather than daily."
     },
     {
-      "timestamp": "2026-11-04T15:11:26+03:00",
+      "timestamp": "2026-11-08T14:00:16+03:00",
       "kpiId": "KPI_16",
       "kpiName": "Government capital expenditure",
-      "status": "red",
-      "label": "Live extraction failed",
-      "observationCount": 0,
-      "latestObservation": null,
-      "detail": "MOF workbook period title was not found."
+      "status": "green",
+      "label": "Live extraction succeeded",
+      "observationCount": 39,
+      "latestObservation": "2026-09-30",
+      "detail": "Quarterly capital expenditures from DataSaudi's Public Finances series, sourced to the Ministry of Finance. Values are converted from SAR billions to SAR million."
     }
   ]
 }
