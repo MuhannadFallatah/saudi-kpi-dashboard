@@ -302,10 +302,13 @@ class InvestingCdsTests(unittest.TestCase):
             extract_investing_cds(b"<html>Just a moment</html>")
 
     def test_history_merge_retains_one_time_initial_load(self) -> None:
-        initial = {"KPI_ID": "KPI_14", "PeriodStart": "2025-01-01", "Value": 64.69}
-        recent = {"KPI_ID": "KPI_14", "PeriodStart": "2026-11-04", "Value": 67.07}
-        merged = merge_cds_history([initial], [], [recent])
+        initial = {"KPI_ID": "KPI_14", "PeriodStart": "2025-01-01T00:00:00", "Value": 64.69}
+        old_recent = {"KPI_ID": "KPI_14", "PeriodStart": "2026-11-04T00:00:00", "Value": 66.0}
+        live_recent = {"KPI_ID": "KPI_14", "PeriodStart": "2026-11-04", "Value": 67.07}
+        merged = merge_cds_history([initial, old_recent], [], [live_recent])
         self.assertEqual([fact["PeriodStart"] for fact in merged], ["2025-01-01", "2026-11-04"])
+        self.assertEqual(merged[-1]["PeriodEnd"], "2026-11-04")
+        self.assertEqual(merged[-1]["Value"], 67.07)
 
 
 class DataSaudiSaiborTests(unittest.TestCase):

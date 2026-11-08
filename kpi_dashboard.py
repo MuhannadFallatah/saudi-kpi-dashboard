@@ -759,7 +759,11 @@ def merge_cds_history(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for group in groups:
         for fact in group:
             if fact.get("KPI_ID") == "KPI_14" and fact.get("PeriodStart"):
-                history[fact["PeriodStart"]] = fact
+                period = str(fact["PeriodStart"]).split("T", 1)[0]
+                normalized = dict(fact)
+                normalized["PeriodStart"] = period
+                normalized["PeriodEnd"] = period
+                history[period] = normalized
     return [history[key] for key in sorted(history)]
 
 
