@@ -1,0 +1,114 @@
+[
+  {
+    "id": "KPI_01",
+    "name": "Purchasing Managers' Index (PMI)",
+    "refreshStatus": "green",
+    "observationCount": 207,
+    "url": "KPI_01.json"
+  },
+  {
+    "id": "KPI_02",
+    "name": "Point-of-sale transactions (POS)",
+    "refreshStatus": "green",
+    "observationCount": 26,
+    "url": "KPI_02.json"
+  },
+  {
+    "id": "KPI_03",
+    "name": "Cement sales",
+    "refreshStatus": "green",
+    "observationCount": 202,
+    "url": "KPI_03.json"
+  },
+  {
+    "id": "KPI_04",
+    "name": "Private-sector bank credit (12a)",
+    "refreshStatus": "green",
+    "observationCount": 405,
+    "url": "KPI_04.json"
+  },
+  {
+    "id": "KPI_05",
+    "name": "Total goods imports",
+    "refreshStatus": "green",
+    "observationCount": 140,
+    "url": "KPI_05.json"
+  },
+  {
+    "id": "KPI_06",
+    "name": "Private-sector imports",
+    "refreshStatus": "red",
+    "observationCount": 0,
+    "url": "KPI_06.json"
+  },
+  {
+    "id": "KPI_07",
+    "name": "Capital imports",
+    "refreshStatus": "green",
+    "observationCount": 140,
+    "url": "KPI_07.json"
+  },
+  {
+    "id": "KPI_08",
+    "name": "Non-oil exports including re-exports",
+    "refreshStatus": "green",
+    "observationCount": 116,
+    "url": "KPI_08.json"
+  },
+  {
+    "id": "KPI_09",
+    "name": "Monthly average SAIBOR",
+    "refreshStatus": "green",
+    "observationCount": 237,
+    "url": "KPI_09.json"
+  },
+  {
+    "id": "KPI_10",
+    "name": "Investment licences",
+    "refreshStatus": "red",
+    "observationCount": 0,
+    "url": "KPI_10.json"
+  },
+  {
+    "id": "KPI_11",
+    "name": "Oil exports",
+    "refreshStatus": "green",
+    "observationCount": 116,
+    "url": "KPI_11.json"
+  },
+  {
+    "id": "KPI_12",
+    "name": "Goods exports",
+    "refreshStatus": "green",
+    "observationCount": 140,
+    "url": "KPI_12.json"
+  },
+  {
+    "id": "KPI_13",
+    "name": "Issued building permits",
+    "refreshStatus": "green",
+    "observationCount": 44,
+    "url": "KPI_13.json"
+  },
+  {
+    "id": "KPI_14",
+    "name": "Credit default swap (CDS) spreads",
+    "refreshStatus": "red",
+    "observationCount": 460,
+    "url": "KPI_14.json"
+  },
+  {
+    "id": "KPI_15",
+    "name": "Tadawul All Share Index (TASI)",
+    "refreshStatus": "green",
+    "observationCount": 130,
+    "url": "KPI_15.json"
+  },
+  {
+    "id": "KPI_16",
+    "name": "Government capital expenditure",
+    "refreshStatus": "green",
+    "observationCount": 39,
+    "url": "KPI_16.json"
+  }
+]

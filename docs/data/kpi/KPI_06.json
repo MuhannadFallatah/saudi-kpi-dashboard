@@ -1,0 +1,23 @@
+{
+  "kpi": {
+    "id": "KPI_06",
+    "name": "Private-sector imports",
+    "nameArabic": "واردات القطاع الخاص",
+    "source": "الهيئة العامة للإحصاء",
+    "sourceUrl": "https://www.stats.gov.sa/ar/statistics-tabs?tab=436312&category=123481",
+    "frequency": "Monthly",
+    "extractionStatus": "No direct series",
+    "observationCount": 0,
+    "latestObservation": null,
+    "refreshStatus": "red",
+    "refreshLabel": "No live connector configured",
+    "refreshNote": "No verified automated provider connector is available for this KPI.",
+    "lastChecked": "2026-11-08T14:00:16+03:00",
+    "observedFrom": null,
+    "observedTo": null,
+    "sourceAccessStatus": "No direct series",
+    "liveExtractionConfigured": false
+  },
+  "count": 0,
+  "data": []
+}

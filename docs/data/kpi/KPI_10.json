@@ -1,0 +1,23 @@
+{
+  "kpi": {
+    "id": "KPI_10",
+    "name": "Investment licences",
+    "nameArabic": "عدد التراخيص الاستثمارية",
+    "source": "وزارة الاستثمار ",
+    "sourceUrl": null,
+    "frequency": "Monthly (as provided)",
+    "extractionStatus": "Excluded - MISA KPI per user request",
+    "observationCount": 0,
+    "latestObservation": null,
+    "refreshStatus": "red",
+    "refreshLabel": "Excluded by request",
+    "refreshNote": "MISA extraction remains excluded per user instruction.",
+    "lastChecked": "2026-11-08T14:00:16+03:00",
+    "observedFrom": null,
+    "observedTo": null,
+    "sourceAccessStatus": "No source verified",
+    "liveExtractionConfigured": false
+  },
+  "count": 0,
+  "data": []
+}
