@@ -14,20 +14,25 @@ from publish_static import build_refresh_log
 from kpi_dashboard import (
     DashboardHandler,
     MartService,
-    GASTAT_EXPORTS_REPORT_URL,
+    DATASAUDI_CAPEX_PAGE,
+    DATASAUDI_CAPEX_URL,
     GASTAT_KPI08_SOURCE_PAGE,
-    apply_database_report_sources,
-    extract_crude_oil_exports,
+    GASTAT_KPI13_SOURCE_PAGE,
+    ITR_WORKBOOK_URL,
+    apply_configured_source_metadata,
+    extract_datasaudi_capex,
     extract_datasaudi_pmi,
     extract_gfcf_imports,
     extract_imports_cpc,
-    extract_nonoil_exports,
+    latest_itr_workbook_url,
+    latest_sts_workbook_url,
+    extract_trade,
     extract_total_exports,
     extract_datasaudi_private_lending,
     extract_datasaudi_saibor,
     extract_investing_cds,
+    merge_cds_history,
     extract_datasaudi_tasi,
-    extract_mof_capex,
     extract_sama_pos_text,
     extract_yamama_cement,
     sama_pos_report_urls,
@@ -44,50 +49,84 @@ class GastatTotalExportsTests(unittest.TestCase):
         self.assertEqual([(r["PeriodStart"], r["Value"], r["KPI_ID"]) for r in rows], [("2026-07-01", 3000.0, "KPI_12")])
 
 
-class GastatCrudeOilTests(unittest.TestCase):
-    def test_only_monthly_rows_are_extracted(self) -> None:
-        def item(year, month, value, unit="Thousand Barrels"):
-            return {"values": {"OBS_VALUE": {"sum": value}},
-                    "keys": {"CL_UNIT_GEN_EN": unit, "PERIOD": year, "CL_MONTHS_GEN_ORD": month}}
-        payload = {"aggs": [item(2025, 12, 216628), item(2025, 999, 2347321), item(2025, 1, 5),
-                            {"values": {"OBS_VALUE": {"sum": 9}}, "keys": {"CL_UNIT_GEN_EN": "Thousand Barrels", "PERIOD": 2025}}],
-                   "pageTotal": 1}
-        rows = extract_crude_oil_exports(payload, "u")
-        self.assertEqual([(r["PeriodStart"], r["Value"]) for r in rows],
-                         [("2025-01-01", 5), ("2025-12-01", 216628)])
-
-    def test_unexpected_unit_is_rejected(self) -> None:
-        payload = {"aggs": [{"values": {"OBS_VALUE": {"sum": 1}},
-                             "keys": {"CL_UNIT_GEN_EN": "USD", "PERIOD": 2025, "CL_MONTHS_GEN_ORD": 1}}], "pageTotal": 1}
-        with self.assertRaises(ValueError):
-            extract_crude_oil_exports(payload, "u")
-
-
-class GastatNonOilExportsTests(unittest.TestCase):
+class GastatItrSourceTests(unittest.TestCase):
     def test_source_page_is_reported_separately_from_extraction_route(self) -> None:
-        catalog = [{"KPI_ID": "KPI_08"}]
+        catalog = [{"KPI_ID": "KPI_08"}, {"KPI_ID": "KPI_11"}]
         sources = {}
-        apply_database_report_sources(catalog, sources)
+        apply_configured_source_metadata(catalog, sources)
         self.assertEqual(catalog[0]["SourceURL"], GASTAT_KPI08_SOURCE_PAGE)
         self.assertEqual(sources["KPI_08"]["PrimarySourceURL"], GASTAT_KPI08_SOURCE_PAGE)
-        self.assertEqual(sources["KPI_08"]["ExtractedDataURL"], GASTAT_EXPORTS_REPORT_URL)
+        self.assertEqual(sources["KPI_08"]["ExtractedDataURL"], ITR_WORKBOOK_URL)
+        self.assertEqual(catalog[1]["SourceURL"], GASTAT_KPI08_SOURCE_PAGE)
+        self.assertEqual(sources["KPI_11"]["PrimarySourceURL"], GASTAT_KPI08_SOURCE_PAGE)
+        self.assertEqual(sources["KPI_11"]["ExtractedDataURL"], ITR_WORKBOOK_URL)
 
-    def test_oil_chapters_are_deducted_from_total(self) -> None:
-        def item(chapter, period, value):
-            return {"values": {"OBS_VALUE": {"sum": value}}, "keys": {"CP21_CHAPTER_CD": chapter, "YEAR_MONTH": period}}
-        payload = {"aggs": [
-            item("12", "2026 / 07", 60_000_000_000), item("33", "2026 / 07", 10_000_000_000),
-            item("34", "2026 / 07", 8_000_000_000),
-            {"values": {"OBS_VALUE": {"sum": 100_000_000_000}}, "keys": {"YEAR_MONTH": "2026 / 07"}},
-            {"values": {"OBS_VALUE": {"sum": 5}}},
-        ], "pageTotal": 1}
-        rows = extract_nonoil_exports(payload, "u")
-        self.assertEqual([(r["PeriodStart"], r["Value"], r["KPI_ID"]) for r in rows],
-                         [("2026-07-01", 30000.0, "KPI_08")])
+    def test_it_extracts_oil_export_value_from_monthly_itr(self) -> None:
+        workbook = Workbook()
+        workbook.active.title = "1.1"
+        exports = workbook.create_sheet("1.2")
+        row = ["2026*", None, "January", 120.0, None, None, None, 540.0, None, None, None, 20.0]
+        exports.append(row)
+        end_use = workbook.create_sheet("7.2")
+        end_use.cell(row=4, column=1, value="Imports")
+        end_use.cell(row=5, column=1, value="Year")
+        end_use.cell(row=6, column=1, value="Month")
+        content = BytesIO()
+        workbook.save(content)
 
-    def test_empty_response_is_rejected(self) -> None:
+        result = extract_trade(content.getvalue(), "itr-url")
+
+        self.assertEqual(len(result["KPI_11"]), 1)
+        fact = result["KPI_11"][0]
+        self.assertEqual((fact["PeriodStart"], fact["Value"], fact["Unit"]),
+                         ("2026-01-01", 540.0, "SAR million"))
+        self.assertEqual(fact["SourceURL"], "itr-url")
+        self.assertEqual(fact["ObservationStatus"], "Preliminary")
+
+    def test_newest_monthly_itr_workbook_is_selected(self) -> None:
+        page = (
+            '<a href="/documents/20117/2435267/ITR+Jun+2026.xlsx/aaa?t=1">x</a>'
+            '<a href="/documents/20117/2435267/ITR_non_oil_Sep2026.xlsx/bbb?t=2">x</a>'
+            '<a href="/documents/20117/2435267/ITR_Aug+2026.xlsx/ccc?t=3">x</a>'
+            '<a href="/documents/20117/2435267/ITR+Aug+2026+AR.pdf/ddd?t=4">x</a>'
+            '<a href="/documents/20117/2435267/ITR_Oct_-2025_AR-EN_%283%29.xlsx_fixed_1/eee?t=5">x</a>'
+        ).encode()
+        self.assertEqual(
+            latest_itr_workbook_url(page),
+            "https://www.stats.gov.sa/documents/20117/2435267/ITR_Aug+2026.xlsx/ccc?t=3",
+        )
+
+    def test_page_without_monthly_itr_workbook_is_rejected(self) -> None:
         with self.assertRaises(ValueError):
-            extract_nonoil_exports({"aggs": [], "pageTotal": 1}, "u")
+            latest_itr_workbook_url(b'<a href="/documents/20117/2435267/ITR_non_oil_Sep2026.xlsx/x">x</a>')
+
+
+class GastatStsFileTests(unittest.TestCase):
+    def test_source_metadata_uses_listing_page_and_retains_latest_file(self) -> None:
+        catalog = [{"KPI_ID": "KPI_13"}]
+        sources = {"KPI_13": {"ExtractedDataURL": "https://www.stats.gov.sa/old.xlsx"}}
+        apply_configured_source_metadata(catalog, sources)
+        self.assertEqual(catalog[0]["SourceURL"], GASTAT_KPI13_SOURCE_PAGE)
+        self.assertIn(GASTAT_KPI13_SOURCE_PAGE, catalog[0]["API_or_DataRoute"])
+        self.assertEqual(sources["KPI_13"]["PrimarySourceURL"], GASTAT_KPI13_SOURCE_PAGE)
+        self.assertEqual(sources["KPI_13"]["ExtractedDataURL"], "https://www.stats.gov.sa/old.xlsx")
+
+    def test_newest_monthly_sts_workbook_is_selected_and_pdfs_skipped(self) -> None:
+        page = (
+            '<a href="/documents/20117/2435267/STS+July+2026+(1).xlsx/old?t=1">July workbook</a>'
+            '<a href="/documents/20117/2435267/STS+August+2026+-+AR.pdf/pdf?t=2">August report</a>'
+            '<a href="/documents/20117/2435267/STS+Aug+2026+(1).xlsx/new?t=3">August workbook</a>'
+            '<a href="/documents/20117/2435267/STS+Sep+2025.xlsx/older?t=4">Old workbook</a>'
+        ).encode()
+        self.assertEqual(
+            latest_sts_workbook_url(page),
+            "https://www.stats.gov.sa/documents/20117/2435267/STS+Aug+2026+(1).xlsx/new?t=3",
+        )
+
+    def test_page_without_monthly_sts_workbook_is_rejected(self) -> None:
+        page = b'<a href="/documents/20117/2435267/STS+August+2026+AR.pdf/pdf">PDF</a>'
+        with self.assertRaises(ValueError):
+            latest_sts_workbook_url(page)
 
 
 class GastatGfcfImportsTests(unittest.TestCase):
@@ -127,21 +166,6 @@ class GastatImportsTests(unittest.TestCase):
             extract_imports_cpc({"aggs": [], "pageTotal": 2}, "u")
 
 
-def mof_workbook(title: str, capex_values: list[float]) -> bytes:
-    workbook = Workbook()
-    stale = workbook.active
-    stale.title = "Expenditures"
-    stale.append(["x", "Actual expenditures in Q1 of FY 2023"])
-    stale.append(["الأصول", 1.0, "Non-financial Assets (CAPEX)"])
-    sheet = workbook.create_sheet("Expenditures ")
-    sheet.append(["المصروفات", "Expenditures"])
-    sheet.append([None, title])
-    sheet.append(["الأصول", *capex_values, "Non-financial Assets (CAPEX)"])
-    buffer = BytesIO()
-    workbook.save(buffer)
-    return buffer.getvalue()
-
-
 class RefreshLogTests(unittest.TestCase):
     def test_builds_summary_and_entries_from_latest_snapshot(self) -> None:
         log = build_refresh_log(
@@ -177,33 +201,47 @@ class RefreshLogTests(unittest.TestCase):
         self.assertEqual(log["entries"][1]["timestamp"], "2026-11-04T08:00:00+03:00")
 
 
-def mof_workbook(title: str, capex_values: list[float]) -> bytes:
-    workbook = Workbook()
-    stale = workbook.active
-    stale.title = "Expenditures"
-    stale.append(["x", "Actual expenditures in Q1 of FY 2023"])
-    stale.append(["الأصول", 1.0, "Non-financial Assets (CAPEX)"])
-    sheet = workbook.create_sheet("Expenditures ")
-    sheet.append(["المصروفات", "Expenditures"])
-    sheet.append([None, title])
-    sheet.append(["الأصول", *capex_values, "Non-financial Assets (CAPEX)"])
-    buffer = BytesIO()
-    workbook.save(buffer)
-    return buffer.getvalue()
+class DataSaudiCapexTests(unittest.TestCase):
+    def test_metadata_uses_public_finances_page_and_api(self) -> None:
+        catalog = [{"KPI_ID": "KPI_16"}]
+        sources = {}
+        apply_configured_source_metadata(catalog, sources)
+        self.assertEqual(catalog[0]["Source"], "DataSaudi (Ministry of Finance)")
+        self.assertEqual(catalog[0]["SourceURL"], DATASAUDI_CAPEX_PAGE)
+        self.assertEqual(sources["KPI_16"]["PrimarySourceURL"], DATASAUDI_CAPEX_PAGE)
+        self.assertEqual(sources["KPI_16"]["ExtractedDataURL"], DATASAUDI_CAPEX_URL)
+        self.assertEqual(catalog[0]["Frequency_or_TimeFrame"], "Quarterly")
 
-
-class MofCapexTests(unittest.TestCase):
-    def test_h1_report_yields_two_quarters_from_current_sheet(self) -> None:
-        rows = extract_mof_capex(
-            mof_workbook("Actual Expenditures in H1 of FY 2026", [89659.0, 46226.0, 43433.0]), "https://www.mof.gov.sa/x"
+    def test_extracts_only_quarterly_capital_expenditure_and_converts_units(self) -> None:
+        payload = {
+            "columns": ["Quarter ID", "Quarter", "Type ID", "Type", "SAR Billions"],
+            "page": {"total": 5},
+            "data": [
+                {"Quarter ID": 20261, "Quarter": "2026-Q1", "Type ID": 1, "Type": "Oil Revenues", "SAR Billions": 300.0},
+                {"Quarter ID": 20261, "Quarter": "2026-Q1", "Type ID": 3, "Type": "Current Expenditures", "SAR Billions": 250.0},
+                {"Quarter ID": 20261, "Quarter": "2026-Q1", "Type ID": 4, "Type": "Capital Expenditures", "SAR Billions": 43.433},
+                {"Quarter ID": 20262, "Quarter": "2026-Q2", "Type ID": 4, "Type": "Capital Expenditures", "SAR Billions": 46.226},
+                {"Quarter ID": 20263, "Quarter": "2026-Q3", "Type ID": 5, "Type": "Deficit Surplus (Actual)", "SAR Billions": 20.0},
+            ],
+        }
+        rows = extract_datasaudi_capex(json.dumps(payload).encode())
+        self.assertEqual(
+            [(row["PeriodStart"], row["PeriodEnd"], row["Value"], row["Unit"]) for row in rows],
+            [
+                ("2026-01-01", "2026-03-31", 43433.0, "SAR million"),
+                ("2026-04-01", "2026-06-30", 46226.0, "SAR million"),
+            ],
         )
-        self.assertEqual([(r["PeriodStart"], r["Value"]) for r in rows],
-                         [("2026-01-01", 43433.0), ("2026-04-01", 46226.0)])
-        self.assertEqual(rows[1]["PeriodEnd"], "2026-06-30")
+        self.assertEqual(rows[0]["SourceURL"], DATASAUDI_CAPEX_PAGE)
 
-    def test_unreconciled_totals_are_rejected(self) -> None:
+    def test_rejects_incomplete_api_response(self) -> None:
+        payload = {
+            "columns": ["Quarter", "Type ID", "Type", "SAR Billions"],
+            "page": {"total": 1},
+            "data": [],
+        }
         with self.assertRaises(ValueError):
-            extract_mof_capex(mof_workbook("Actual expenditures until Q3 of FY 2024", [100.0, 1.0, 2.0, 3.0]), "u")
+            extract_datasaudi_capex(json.dumps(payload).encode())
 
 
 class DataSaudiPmiTests(unittest.TestCase):
@@ -262,6 +300,12 @@ class InvestingCdsTests(unittest.TestCase):
     def test_rejects_blocked_page(self) -> None:
         with self.assertRaisesRegex(ValueError, "blocked"):
             extract_investing_cds(b"<html>Just a moment</html>")
+
+    def test_history_merge_retains_one_time_initial_load(self) -> None:
+        initial = {"KPI_ID": "KPI_14", "PeriodStart": "2025-01-01", "Value": 64.69}
+        recent = {"KPI_ID": "KPI_14", "PeriodStart": "2026-11-04", "Value": 67.07}
+        merged = merge_cds_history([initial], [], [recent])
+        self.assertEqual([fact["PeriodStart"] for fact in merged], ["2025-01-01", "2026-11-04"])
 
 
 class DataSaudiSaiborTests(unittest.TestCase):

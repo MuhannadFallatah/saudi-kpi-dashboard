@@ -38,7 +38,6 @@ HOST = "127.0.0.1"
 PORT = int(os.environ.get("KPI_PORT", "8765"))
 ALLOWED_HOSTS = {
     "www.stats.gov.sa",
-    "www.mof.gov.sa",
     "api.datasaudi.sa",
     "www.sama.gov.sa",
     "www.yamamacement.com",
@@ -56,19 +55,12 @@ GASTAT_END_USE_REPORT_URL = (
 )
 GASTAT_END_USE_INDEX = "DPV_IMP_ENDU_EFFT020101"
 GFCF_END_USE = "Gross Fixed Capital Formation"
-GASTAT_EXPORTS_REPORT_URL = (
-    "https://database.stats.gov.sa/Build_Reports/main/home/build-report?reportData=9516299&fetchSavedSlice=true"
-)
-GASTAT_EXPORTS_INDEX = "DPV_EXP_CP21_EFFT010101"
 GASTAT_KPI08_SOURCE_PAGE = (
     "https://www.stats.gov.sa/ar/statistics-tabs?tab=436312&category=123481"
 )
-OIL_CPC_CHAPTERS = {"12", "33"}
-GASTAT_CRUDE_REPORT_URL = (
-    "https://database.stats.gov.sa/Build_Reports/main/home/build-report?reportData=9515243&fetchSavedSlice=true"
+GASTAT_KPI13_SOURCE_PAGE = (
+    "https://www.stats.gov.sa/ar/statistics-tabs?tab=436312&category=123342"
 )
-GASTAT_CRUDE_INDEX = "DSD_OG_EAE_V_MV"
-CRUDE_UNIT = "Thousand Barrels"
 GASTAT_TOTAL_EXPORTS_REPORT_URL = (
     "https://database.stats.gov.sa/Build_Reports/main/home/build-report?reportData=9516298&fetchSavedSlice=true"
 )
@@ -77,15 +69,23 @@ ITR_WORKBOOK_URL = (
     "https://www.stats.gov.sa/documents/20117/2435267/ITR+Jul+2026.xlsx/"
     "4cd729e2-a62f-9b94-b06a-23f5f66c54ec?t=1790669050760"
 )
+# Fallback only; the live refresh uses the newest monthly ITR file linked on GASTAT_KPI08_SOURCE_PAGE.
+ITR_FILE_LINK = re.compile(r"/documents/20117/2435267/(ITR[^/\"'\s<>]*)/([^\"'\s<>]+)")
+MONTHLY_FILE_PERIOD = re.compile(r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[\s_+\-]*(20\d{2})", re.IGNORECASE)
+STS_FILE_LINK = re.compile(r"/documents/20117/2435267/(STS[^/\"'\s<>]*)/([^\"'\s<>]+)", re.IGNORECASE)
+ITR_MONTH_NAMES = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
+KPI08_ITR_NOTE = (
+    "Extracted from the newest monthly GASTAT ITR workbook linked on the GASTAT goods-trade statistics page "
+    "(table 1.2: national non-oil exports plus re-exports), SAR million."
+)
+KPI11_ITR_NOTE = (
+    "Extracted from the newest monthly GASTAT ITR workbook linked on the GASTAT goods-trade statistics page "
+    "(table 1.2: oil exports value), SAR million; starred observations are preliminary."
+)
 DATABASE_REPORT_URLS = {
     "KPI_05": GASTAT_IMPORTS_REPORT_URL,
     "KPI_07": GASTAT_END_USE_REPORT_URL,
-    "KPI_08": GASTAT_EXPORTS_REPORT_URL,
-    "KPI_11": GASTAT_CRUDE_REPORT_URL,
     "KPI_12": GASTAT_TOTAL_EXPORTS_REPORT_URL,
-}
-DATABASE_SOURCE_PAGE_URLS = {
-    "KPI_08": GASTAT_KPI08_SOURCE_PAGE,
 }
 DATABASE_REPORT_NOTES = {
     "KPI_12": "GASTAT database report 'Exports Value by End Use': monthly sum of all end-use categories "
@@ -93,10 +93,6 @@ DATABASE_REPORT_NOTES = {
     "KPI_05": "GASTAT database report 'Imports Value by Central Product Classification (CPC2.1)': "
               "monthly sum of all sections, SAR million.",
     "KPI_07": "GASTAT database report 'Imports Value by End Use': Gross Fixed Capital Formation, SAR million.",
-    "KPI_08": "GASTAT monthly goods-trade statistics page; extracted from the underlying database report "
-              "'Exports Value by Central Product Classification (CPC2.1)' as total exports less CPC chapters "
-              "12 and 33 (non-oil including re-exports), SAR million.",
-    "KPI_11": "GASTAT database report 'Crude Oil Exports': monthly crude oil export volume, thousand barrels.",
 }
 
 DATASAUDI_TASI_URL = (
@@ -104,6 +100,16 @@ DATASAUDI_TASI_URL = (
     "?cube=tadawul_indicators&drilldowns=Indicator%2CMonth&measures=Value&locale=en"
 )
 DATASAUDI_TASI_PAGE = "https://datasaudi.sa/en/#tadawul-indicators"
+DATASAUDI_CAPEX_URL = (
+    "https://api.datasaudi.sa/tesseract/data.jsonrecords"
+    "?cube=mof_government_revenues_expenditures_quarter"
+    "&drilldowns=Type%2CQuarter&measures=SAR+Billions&locale=en"
+)
+DATASAUDI_CAPEX_PAGE = "https://datasaudi.sa/ar/#public-finances"
+DATASAUDI_CAPEX_NOTE = (
+    "Quarterly capital expenditures from DataSaudi's Public Finances series, sourced to the Ministry of Finance. "
+    "Values are converted from SAR billions to SAR million."
+)
 INVESTING_CDS_URL = "https://www.investing.com/rates-bonds/saudi-arabia-cds-5-year-usd-historical-data"
 INVESTING_CDS_PAGE = "https://www.investing.com/rates-bonds/saudi-arabia-cds-5-year-usd"
 PUBLISHED_KPI_URL = "https://muhannadfallatah.github.io/saudi-kpi-dashboard/data/kpi/{kpi_id}.json"
@@ -255,7 +261,7 @@ def workbook_data(path: Path) -> dict[str, Any]:
             if row and row[1] == "KPI_08"
         ]
     workbook.close()
-    apply_database_report_sources(catalog, sources)
+    apply_configured_source_metadata(catalog, sources)
     return {
         "catalog": catalog,
         "sources": sources,
@@ -291,27 +297,55 @@ def download_bytes(url: str) -> bytes:
         return response.read()
 
 
-def apply_database_report_sources(catalog: list[dict[str, Any]], sources: dict[str, dict[str, Any]]) -> None:
-    # KPIs 05, 07 and 08 are extracted from GASTAT database reports.
+def apply_configured_source_metadata(catalog: list[dict[str, Any]], sources: dict[str, dict[str, Any]]) -> None:
+    # KPIs 05, 07 and 12 use GASTAT reports; KPIs 08 and 11 use ITR; KPI 16 uses DataSaudi.
     for item in catalog:
         kpi_id = item.get("KPI_ID")
-        url = DATABASE_REPORT_URLS.get(kpi_id)
-        if not url:
+        if kpi_id in {"KPI_08", "KPI_11"}:
+            url = ITR_WORKBOOK_URL
+            source_page_url = GASTAT_KPI08_SOURCE_PAGE
+            route = f"GASTAT monthly ITR workbook: {url}"
+            note = KPI08_ITR_NOTE if kpi_id == "KPI_08" else KPI11_ITR_NOTE
+        elif kpi_id == "KPI_16":
+            url = DATASAUDI_CAPEX_URL
+            source_page_url = DATASAUDI_CAPEX_PAGE
+            route = f"DataSaudi Public Finances API: {url}"
+            note = DATASAUDI_CAPEX_NOTE
+        elif kpi_id == "KPI_13":
+            source = sources.get(kpi_id, {})
+            url = source.get("ExtractedDataURL") or item.get("VerifiedData_or_API_ReferenceURL")
+            source_page_url = GASTAT_KPI13_SOURCE_PAGE
+            route = f"Newest monthly GASTAT STS workbook discovered from: {source_page_url}"
+            note = (
+                "The newest monthly workbook linked on the GASTAT STS statistics page is selected at refresh; "
+                "Table 7 contains issued building permits, and starred 2026 values are preliminary."
+            )
+        elif kpi_id in DATABASE_REPORT_URLS:
+            url = DATABASE_REPORT_URLS[kpi_id]
+            source_page_url = url
+            route = f"GASTAT database report (Build Reports API): {url}"
+            note = DATABASE_REPORT_NOTES[kpi_id]
+        else:
             continue
-        source_page_url = DATABASE_SOURCE_PAGE_URLS.get(kpi_id, url)
-        note = DATABASE_REPORT_NOTES[kpi_id]
         item.update({
             "SourceURL": source_page_url,
-            "API_or_DataRoute": f"GASTAT database report (Build Reports API): {url}",
+            "API_or_DataRoute": route,
             "VerifiedData_or_API_ReferenceURL": source_page_url,
             "Access_Caveat": None,
             "ExtractionNote": note,
         })
+        if kpi_id == "KPI_16":
+            item.update({
+                "Source": "DataSaudi (Ministry of Finance)",
+                "Frequency_or_TimeFrame": "Quarterly",
+                "APIMatchStatus": "Verified API",
+                "ExtractionStatus": "Live API extraction configured",
+            })
         source = sources.setdefault(kpi_id, {"KPI_ID": kpi_id})
         source.update({
             "PrimarySourceURL": source_page_url,
             "ExtractedDataURL": url,
-            "ExtractionStatus": "Extracted",
+            "ExtractionStatus": "Live API extraction configured" if kpi_id == "KPI_16" else "Extracted",
             "ExtractionNote": note,
         })
 
@@ -395,94 +429,41 @@ def fetch_gastat_end_use_imports() -> dict[str, Any]:
     })
 
 
-def fetch_gastat_exports() -> dict[str, Any]:
-    return post_json(GASTAT_DB_SELECT_URL, {
-        "type": "select",
-        "index": GASTAT_EXPORTS_INDEX,
-        "query": {"aggs": {
-            "by": {"rows": [{"uniqueName": "CP21_CHAPTER_CD"}], "cols": [{"uniqueName": "YEAR_MONTH"}]},
-            "values": [{"func": "sum", "field": {"uniqueName": "OBS_VALUE"}}],
-        }},
-        "page": 0,
-    })
-
-
-def extract_nonoil_exports(payload: dict[str, Any], source_url: str) -> list[dict[str, Any]]:
-    if payload.get("pageTotal", 1) != 1:
-        raise ValueError("GASTAT exports response is paged; expected a single page.")
-    totals: dict[str, float] = {}
-    oil: dict[str, float] = {}
-    for item in payload.get("aggs", []):
-        keys = item.get("keys") or {}
-        period = keys.get("YEAR_MONTH")
-        value = ((item.get("values") or {}).get("OBS_VALUE") or {}).get("sum")
-        if not period or value is None:
+def latest_itr_workbook_url(page: bytes) -> str:
+    # The non-oil ITR files are a separate series and are skipped.
+    html = unescape(page.decode("utf-8", "replace"))
+    latest: tuple[tuple[int, int], str] | None = None
+    for file_name, token in dict.fromkeys(ITR_FILE_LINK.findall(html)):
+        name = unquote(file_name)
+        if ".xlsx" not in name.lower() or "non" in name.lower():
             continue
-        chapter = keys.get("CP21_CHAPTER_CD")
-        if chapter is None:
-            totals[period] = value
-        elif chapter in OIL_CPC_CHAPTERS:
-            oil[period] = oil.get(period, 0.0) + value
-    facts = []
-    for period, total in totals.items():
-        match = re.fullmatch(r"\s*(\d{4})\s*/\s*(\d{1,2})\s*", str(period))
+        match = MONTHLY_FILE_PERIOD.search(name)
         if not match:
-            raise ValueError(f"Unexpected GASTAT exports period: {period}")
-        facts.append(make_fact(
-            "KPI_08", int(match.group(1)), int(match.group(2)), (total - oil.get(period, 0.0)) / 1_000_000,
-            "SAR million", "GASTAT Exports Value by Central Product Classification (CPC2.1)", source_url,
-            "Total exports less CPC2.1 chapters 12 (crude petroleum and natural gas) and 33 (refined petroleum "
-            "products); includes re-exports. SAR converted to SAR million.",
-        ))
-    if not facts:
-        raise ValueError("GASTAT exports response contained no monthly observations.")
-    return sorted(facts, key=lambda fact: fact["PeriodStart"])
-
-
-def fetch_gastat_crude_oil_exports() -> dict[str, Any]:
-    return post_json(GASTAT_DB_SELECT_URL, {
-        "type": "select",
-        "index": GASTAT_CRUDE_INDEX,
-        "query": {
-            "aggs": {
-                "by": {
-                    "rows": [{"uniqueName": "CL_UNIT_GEN_EN"}, {"uniqueName": "PERIOD"}],
-                    "cols": [{"uniqueName": "CL_MONTHS_GEN_ORD"}],
-                },
-                "values": [{"func": "sum", "field": {"uniqueName": "OBS_VALUE"}}],
-            },
-            "filter": {"type": "and", "value": [
-                {"field": {"uniqueName": "CL_INDICATORS_OG_EN"}, "include": [{"member": "Crude Oil Exports"}]},
-            ]},
-        },
-        "page": 0,
-    })
-
-
-def extract_crude_oil_exports(payload: dict[str, Any], source_url: str) -> list[dict[str, Any]]:
-    if payload.get("pageTotal", 1) != 1:
-        raise ValueError("GASTAT crude oil response is paged; expected a single page.")
-    facts = []
-    for item in payload.get("aggs", []):
-        keys = item.get("keys") or {}
-        if keys.get("PERIOD") is None or keys.get("CL_MONTHS_GEN_ORD") is None:
-            continue  # yearly and grand-total rows
-        month = int(keys["CL_MONTHS_GEN_ORD"])
-        if not 1 <= month <= 12:
-            continue  # month ordinal 999 is the annual total
-        if keys.get("CL_UNIT_GEN_EN") != CRUDE_UNIT:
-            raise ValueError(f"Unexpected crude oil export unit: {keys.get('CL_UNIT_GEN_EN')!r}")
-        total = ((item.get("values") or {}).get("OBS_VALUE") or {}).get("sum")
-        if total is None:
             continue
-        facts.append(make_fact(
-            "KPI_11", int(keys["PERIOD"]), month, total, "Thousand barrels",
-            "GASTAT Crude Oil Exports", source_url,
-            "Monthly crude oil export volume from the GASTAT oil and gas statistics.",
-        ))
-    if not facts:
-        raise ValueError("GASTAT crude oil response contained no monthly observations.")
-    return sorted(facts, key=lambda fact: fact["PeriodStart"])
+        period = (int(match.group(2)), ITR_MONTH_NAMES.index(match.group(1).lower()) + 1)
+        if latest is None or period > latest[0]:
+            latest = (period, f"https://www.stats.gov.sa/documents/20117/2435267/{file_name}/{token}")
+    if latest is None:
+        raise ValueError("No monthly ITR workbook was found on the GASTAT statistics page.")
+    return latest[1]
+
+
+def latest_sts_workbook_url(page: bytes) -> str:
+    html = unescape(page.decode("utf-8", "replace"))
+    latest: tuple[tuple[int, int], str] | None = None
+    for file_name, token in dict.fromkeys(STS_FILE_LINK.findall(html)):
+        name = unquote(file_name)
+        if ".xlsx" not in name.lower():
+            continue
+        match = MONTHLY_FILE_PERIOD.search(name)
+        if not match:
+            continue
+        period = (int(match.group(2)), ITR_MONTH_NAMES.index(match.group(1).lower()) + 1)
+        if latest is None or period > latest[0]:
+            latest = (period, f"https://www.stats.gov.sa/documents/20117/2435267/{file_name}/{token}")
+    if latest is None:
+        raise ValueError("No monthly STS workbook was found on the GASTAT statistics page.")
+    return latest[1]
 
 
 def extract_gfcf_imports(payload: dict[str, Any], source_url: str) -> list[dict[str, Any]]:
@@ -541,96 +522,6 @@ def make_quarter_fact(
     fact["Month"] = None
     fact["MonthName"] = f"Q{quarter}"
     return fact
-
-
-MOF_CAPEX_LABEL = "non-financial assets (capex)"
-MOF_PERIOD_RE = re.compile(
-    r"Actual\s+expenditures?\s+(?:in|until)\s+(Q[1-4]|H1)\s+of\s+FY\s+(\d{4})", re.IGNORECASE
-)
-MOF_PERIOD_QUARTERS = {"Q1": 1, "H1": 2, "Q2": 2, "Q3": 3, "Q4": 4}
-
-
-def extract_mof_capex(content: bytes, source_url: str) -> list[dict[str, Any]]:
-    workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
-    try:
-        # The current report sheet carries a trailing space; unnamed-suffix copies are stale templates.
-        names = sorted(
-            (name for name in workbook.sheetnames if name.strip() == "Expenditures"),
-            key=lambda name: name == name.strip(),
-        )
-        if not names:
-            raise ValueError("MOF workbook has no Expenditures sheet.")
-        rows = list(workbook[names[0]].iter_rows(values_only=True))
-    finally:
-        workbook.close()
-    period = None
-    for row in rows[:8]:
-        for cell in row:
-            match = MOF_PERIOD_RE.search(cell) if isinstance(cell, str) else None
-            if match:
-                period = match
-                break
-        if period:
-            break
-    if not period:
-        raise ValueError("MOF workbook period title was not found.")
-    quarters = MOF_PERIOD_QUARTERS[period.group(1).upper()]
-    year = int(period.group(2))
-    values: list[float] | None = None
-    for row in rows:
-        if any(isinstance(cell, str) and cell.strip().lower() == MOF_CAPEX_LABEL for cell in row):
-            values = [float(c) for c in row if isinstance(c, (int, float)) and not isinstance(c, bool)]
-            break
-    if values is None:
-        raise ValueError("MOF CAPEX row was not found.")
-    if quarters == 1:
-        by_quarter = values[:1]
-    else:
-        by_quarter = values[1 : quarters + 1]
-        if len(by_quarter) != quarters or abs(sum(by_quarter) - values[0]) > 1:
-            raise ValueError("MOF CAPEX quarterly values do not reconcile with the cumulative total.")
-        by_quarter.reverse()
-    if len(by_quarter) != quarters:
-        raise ValueError("MOF CAPEX quarterly values are incomplete.")
-    return [
-        make_quarter_fact(
-            "KPI_16", year, quarter, value, "SAR million",
-            "MOF Quarterly Budget Performance Report - Expenditures: Non-financial Assets (CAPEX)",
-            source_url, "Actual quarterly government capital expenditure; quarter derived from the report's period columns.",
-        )
-        for quarter, value in enumerate(by_quarter, start=1)
-    ]
-
-
-def mof_report_urls(fetch) -> list[str]:
-    # Latest report workbook per fiscal year, discovered from the MOF year pages.
-    urls: list[str] = []
-    for year in range(2022, date.today().year + 1):
-        links: list[str] = []
-        last_problem = "no workbook links on the page"
-        for slug in (f"budget-performance-report-{year}-1", f"budget-performance-report-{year}"):
-            try:
-                html = fetch(f"https://www.mof.gov.sa/ar/w/{slug}").decode("utf-8", "replace")
-            except OSError as error:
-                last_problem = f"{slug}: {error}"
-                continue
-            links = list(dict.fromkeys(re.findall(r"/documents/[^\"'\s<>]*\.xlsx[^\"'\s<>]*", html)))
-            if links:
-                break
-            last_problem = f"{slug}: no workbook links in {len(html)} characters of HTML"
-        if not links:
-            if year == date.today().year:
-                continue
-            raise ValueError(f"No MOF budget performance workbook found for {year} ({last_problem}).")
-
-        def quarter_of(link: str) -> int:
-            name = unquote(link.split("/")[4]) if link.count("/") >= 4 else link
-            match = re.search(r"Q([1-4])", name)
-            return int(match.group(1)) if match else 0
-
-        best = max(links, key=quarter_of)
-        urls.append("https://www.mof.gov.sa" + best.replace("?download=true", "").replace("&amp;", "&"))
-    return urls
 
 
 def make_fact(
@@ -863,6 +754,15 @@ def extract_investing_cds(content: bytes) -> list[dict[str, Any]]:
     return [rows[key] for key in sorted(rows)]
 
 
+def merge_cds_history(*groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    history: dict[str, dict[str, Any]] = {}
+    for group in groups:
+        for fact in group:
+            if fact.get("KPI_ID") == "KPI_14" and fact.get("PeriodStart"):
+                history[fact["PeriodStart"]] = fact
+    return [history[key] for key in sorted(history)]
+
+
 def extract_datasaudi_tasi(content: bytes) -> list[dict[str, Any]]:
     try:
         payload = json.loads(content)
@@ -906,6 +806,57 @@ def extract_datasaudi_tasi(content: bytes) -> list[dict[str, Any]]:
         )
     if not rows:
         raise ValueError("DataSaudi Tadawul response contains no 'Index' observations.")
+    return [rows[period] for period in sorted(rows)]
+
+
+def extract_datasaudi_capex(content: bytes) -> list[dict[str, Any]]:
+    try:
+        payload = json.loads(content)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("DataSaudi public-finances response is not valid JSON.") from error
+    if not isinstance(payload, dict):
+        raise ValueError("DataSaudi public-finances response must be a JSON object.")
+
+    required_columns = {"Quarter", "Type ID", "Type", "SAR Billions"}
+    columns = payload.get("columns")
+    data = payload.get("data")
+    page = payload.get("page")
+    total = page.get("total") if isinstance(page, dict) else None
+    if not isinstance(columns, list) or not required_columns.issubset(columns):
+        raise ValueError("DataSaudi public-finances response is missing expected data columns.")
+    if not isinstance(data, list) or not data:
+        raise ValueError("DataSaudi public-finances response contains no quarterly observations.")
+    if not isinstance(total, int) or total != len(data):
+        raise ValueError("DataSaudi public-finances response is incomplete or has an invalid total.")
+
+    rows: dict[str, dict[str, Any]] = {}
+    for item in data:
+        if not isinstance(item, dict):
+            raise ValueError("DataSaudi public-finances response contains an invalid observation.")
+        if item.get("Type ID") != 4 or item.get("Type") != "Capital Expenditures":
+            continue
+        period = item.get("Quarter")
+        match = re.fullmatch(r"(\d{4})-Q([1-4])", period) if isinstance(period, str) else None
+        value = item.get("SAR Billions")
+        if not match:
+            raise ValueError(f"DataSaudi public-finances response has an invalid quarter: {period!r}.")
+        if period in rows:
+            raise ValueError(f"DataSaudi public-finances response repeats capital expenditures for {period}.")
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+            raise ValueError(f"DataSaudi public-finances response has an invalid value for {period}.")
+        year, quarter = int(match.group(1)), int(match.group(2))
+        rows[period] = make_quarter_fact(
+            "KPI_16",
+            year,
+            quarter,
+            value * 1000,
+            "SAR million",
+            "Government Revenues and Expenditures - Quarterly (DataSaudi/MOF)",
+            DATASAUDI_CAPEX_PAGE,
+            DATASAUDI_CAPEX_NOTE,
+        )
+    if not rows:
+        raise ValueError("DataSaudi public-finances response contains no capital-expenditure observations.")
     return [rows[period] for period in sorted(rows)]
 
 
@@ -1146,11 +1097,13 @@ def extract_trade(content: bytes, source_url: str) -> dict[str, list[dict[str, A
             ))
 
     for year, month, row in monthly_rows(workbook["1.2"], 0, 2):
+        observation_status = "Preliminary" if "*" in str(row[0]) else "Reported"
         if row[7] is not None:
             result["KPI_11"].append(make_fact(
                 "KPI_11", year, month, row[7], "SAR million",
                 "GASTAT ITR 1.2 - monthly oil exports", source_url,
-                "Extracted from the national oil exports value column.",
+                "Oil exports value, not export volume.",
+                observation_status,
             ))
         if row[3] is not None and row[11] is not None:
             total = row[3] + row[11]
@@ -1158,6 +1111,7 @@ def extract_trade(content: bytes, source_url: str) -> dict[str, list[dict[str, A
                 "KPI_08", year, month, total, "SAR million",
                 "GASTAT ITR 1.2 - non-oil exports including re-exports", source_url,
                 "National non-oil exports plus re-exports.",
+                observation_status,
             ))
             result.setdefault("KPI_08_Components", []).append({
                 "CountryCode": "SAU",
@@ -1329,7 +1283,7 @@ class MartService:
                 "factCount": len(self._data["facts"]),
                 "durationSeconds": round(time.monotonic() - started, 3),
                 "message": (
-                    "DataSaudi PMI data, configured GASTAT reports, and MOF reports were fetched."
+                    "DataSaudi, configured GASTAT reports, and source data were fetched."
                     if live
                     else "Workbook loaded; no new provider values were fetched."
                 ),
@@ -1347,7 +1301,6 @@ class MartService:
         with self._lock:
             sources = dict(self._data["sources"])
             existing_facts = list(self._data["facts"])
-        source_url = {"KPI_13": sources.get("KPI_13", {}).get("ExtractedDataURL") or ""}
         downloaded: dict[str, bytes] = {}
         errors: dict[str, str] = {}
         extracted: dict[str, list[dict[str, Any]]] = {}
@@ -1399,23 +1352,27 @@ class MartService:
             errors["KPI_15"] = str(error)
 
         try:
+            extracted["KPI_16"] = extract_datasaudi_capex(fetch(DATASAUDI_CAPEX_URL))
+            notes["KPI_16"] = DATASAUDI_CAPEX_NOTE
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            errors["KPI_16"] = str(error)
+
+        try:
             cds = extract_investing_cds(fetch(INVESTING_CDS_URL))
-            history: dict[str, dict[str, Any]] = {}
+            published_history: list[dict[str, Any]] = []
             try:
                 previous = json.loads(
                     download_bytes(PUBLISHED_KPI_URL.format(kpi_id="KPI_14") + f"?t={int(time.time())}")
                 )
-                for fact in previous.get("data", []):
-                    if fact.get("KPI_ID") == "KPI_14" and fact.get("PeriodStart"):
-                        history[fact["PeriodStart"]] = fact
+                published_history = previous.get("data", [])
             except (OSError, ValueError, AttributeError):
                 pass
-            history.update({fact["PeriodStart"]: fact for fact in cds})
-            extracted["KPI_14"] = [history[key] for key in sorted(history)]
+            extracted["KPI_14"] = merge_cds_history(existing_facts, published_history, cds)
             notes["KPI_14"] = (
                 "Extracted daily closes of the Saudi Arabia 5-year USD CDS from Investing.com "
                 f"({INVESTING_CDS_PAGE}); the page exposes roughly one month, so history accumulates "
-                "across refreshes."
+                "across refreshes. Existing workbook history, including the one-time initial CSV load, "
+                "is retained."
             )
         except (OSError, ValueError, KeyError, IndexError) as error:
             errors["KPI_14"] = str(error)
@@ -1448,12 +1405,6 @@ class MartService:
             errors["KPI_03"] = str(error)
 
         try:
-            extracted["KPI_11"] = extract_crude_oil_exports(fetch_gastat_crude_oil_exports(), GASTAT_CRUDE_REPORT_URL)
-            notes["KPI_11"] = "Extracted from the GASTAT database report Crude Oil Exports."
-        except (OSError, ValueError, KeyError, IndexError) as error:
-            errors["KPI_11"] = str(error)
-
-        try:
             extracted["KPI_05"] = extract_imports_cpc(fetch_gastat_imports(), GASTAT_IMPORTS_REPORT_URL)
             notes["KPI_05"] = "Extracted from the GASTAT database report Imports Value by CPC2.1."
         except (OSError, ValueError, KeyError, IndexError) as error:
@@ -1465,16 +1416,18 @@ class MartService:
         except (OSError, ValueError, KeyError, IndexError) as error:
             errors["KPI_07"] = str(error)
 
+        extracted_components: list[dict[str, Any]] = []
         try:
-            extracted["KPI_08"] = extract_nonoil_exports(
-                fetch_gastat_exports(), GASTAT_KPI08_SOURCE_PAGE
-            )
-            notes["KPI_08"] = (
-                "GASTAT monthly goods-trade statistics page; extracted from its underlying Exports Value by "
-                "CPC2.1 database report (total exports less CPC chapters 12 and 33)."
-            )
+            itr_source_url = latest_itr_workbook_url(download_bytes(GASTAT_KPI08_SOURCE_PAGE))
+            trade = extract_trade(fetch(itr_source_url), itr_source_url)
+            extracted["KPI_08"] = trade["KPI_08"]
+            extracted["KPI_11"] = trade["KPI_11"]
+            extracted_components = list(trade.get("KPI_08_Components", []))
+            notes["KPI_08"] = KPI08_ITR_NOTE
+            notes["KPI_11"] = KPI11_ITR_NOTE
         except (OSError, ValueError, KeyError, IndexError) as error:
             errors["KPI_08"] = str(error)
+            errors["KPI_11"] = str(error)
 
         try:
             extracted["KPI_12"] = extract_total_exports(fetch_gastat_total_exports(), GASTAT_TOTAL_EXPORTS_REPORT_URL)
@@ -1482,32 +1435,15 @@ class MartService:
         except (OSError, ValueError, KeyError, IndexError) as error:
             errors["KPI_12"] = str(error)
 
-        # The national/re-export split is not in the database reports, so it stays on the ITR workbook.
-        extracted_components: list[dict[str, Any]] = []
         try:
-            trade = extract_trade(fetch(ITR_WORKBOOK_URL), ITR_WORKBOOK_URL)
-            extracted_components = list(trade.get("KPI_08_Components", []))
-        except (OSError, ValueError, KeyError, IndexError):
-            pass
-
-
-        try:
-            permits_url = source_url["KPI_13"]
+            permits_page = download_bytes(GASTAT_KPI13_SOURCE_PAGE)
+            permits_url = latest_sts_workbook_url(permits_page)
             extracted["KPI_13"] = extract_building_permits(fetch(permits_url), permits_url)
-            notes["KPI_13"] = "Extracted from the configured official GASTAT STS workbook."
+            notes["KPI_13"] = (
+                "Extracted from the newest monthly GASTAT STS workbook linked on the statistics page."
+            )
         except (OSError, ValueError, KeyError, IndexError) as error:
             errors["KPI_13"] = str(error)
-
-        try:
-            capex: list[dict[str, Any]] = []
-            for report_url in mof_report_urls(download_bytes):
-                capex.extend(extract_mof_capex(download_bytes(report_url), report_url))
-            if not capex:
-                raise ValueError("No MOF capital expenditure observations were extracted.")
-            extracted["KPI_16"] = capex
-            notes["KPI_16"] = "Extracted from the latest MOF quarterly budget performance report of each fiscal year."
-        except (OSError, ValueError, KeyError, IndexError) as error:
-            errors["KPI_16"] = str(error)
 
         replace_ids = {
             "KPI_01", "KPI_02", "KPI_03", "KPI_04", "KPI_05", "KPI_07", "KPI_08",
@@ -1524,9 +1460,21 @@ class MartService:
             ] + replacement_facts
             if "KPI_08" in successful and extracted_components:
                 self._data["kpi08_components"] = extracted_components
-            for kpi_id in DATABASE_REPORT_URLS:
+            for kpi_id in ("KPI_08", "KPI_11"):
                 if kpi_id in successful:
-                    periods = sorted(row["PeriodStart"][:7] for row in successful[kpi_id])
+                    self._data["sources"].setdefault(kpi_id, {"KPI_ID": kpi_id})["ExtractedDataURL"] = itr_source_url
+            if "KPI_16" in successful:
+                self._data["sources"].setdefault("KPI_16", {"KPI_ID": "KPI_16"})["ExtractedDataURL"] = DATASAUDI_CAPEX_URL
+            if "KPI_13" in successful:
+                self._data["sources"].setdefault("KPI_13", {"KPI_ID": "KPI_13"})["ExtractedDataURL"] = permits_url
+            for kpi_id in (*DATABASE_REPORT_URLS, "KPI_08", "KPI_11", "KPI_16"):
+                if kpi_id in successful:
+                    periods = sorted(
+                        f"{row['Year']}-{row['MonthName']}"
+                        if row.get("Month") is None and re.fullmatch(r"Q[1-4]", str(row.get("MonthName")))
+                        else row["PeriodStart"][:7]
+                        for row in successful[kpi_id]
+                    )
                     self._data["sources"].setdefault(kpi_id, {"KPI_ID": kpi_id}).update({
                         "ObservedFrom": periods[0],
                         "ObservedTo": periods[-1],
@@ -1534,6 +1482,12 @@ class MartService:
                     })
             for item in self._data["catalog"]:
                 kpi_id = item["KPI_ID"]
+                if kpi_id in {"KPI_08", "KPI_11"} and kpi_id in successful:
+                    item["API_or_DataRoute"] = f"GASTAT monthly ITR workbook: {itr_source_url}"
+                if kpi_id == "KPI_16" and kpi_id in successful:
+                    item["API_or_DataRoute"] = f"DataSaudi Public Finances API: {DATASAUDI_CAPEX_URL}"
+                if kpi_id == "KPI_13" and kpi_id in successful:
+                    item["API_or_DataRoute"] = f"GASTAT STS workbook: {permits_url}"
                 if kpi_id == "KPI_10":
                     self._refresh_states[kpi_id] = {
                         "status": "red",
@@ -1645,9 +1599,10 @@ class MartService:
                 "Scheduled refresh extracts DataSaudi's PMI series for KPI 01 and private-sector bank claims "
                 "for KPI 04, SAMA weekly POS reports for KPI 02, and Yamama Cement monthly sales for KPI 03; "
                 "it downloads official Excel reports "
-                "from GASTAT for KPIs 05, 07, 08, "
-                "11, 12 and 13 (fixed report URLs from the source register) and the Ministry of Finance quarterly "
-                "budget performance reports for KPI 16 (report links are discovered on the MOF year pages). "
+                "from GASTAT for KPIs 05, 07, and 12 (fixed database-report routes), reads the newest monthly "
+                "ITR workbook for KPIs 08 and 11 and the newest monthly STS workbook for KPI 13 from their "
+                "GASTAT statistics pages, and uses DataSaudi's Ministry of Finance "
+                "quarterly capital-expenditure series for KPI 16. "
                 "Other KPIs need verified provider-specific connectors."
             ),
             "factCount": len(facts),
