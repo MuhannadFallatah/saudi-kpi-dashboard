@@ -57,6 +57,12 @@ KPI 16 uses DataSaudi's
 [Public Finances](https://datasaudi.sa/ar/#public-finances) quarterly
 "Capital Expenditures" series, sourced to the Ministry of Finance. The
 DataSaudi API reports SAR billions; values are converted to SAR million.
+KPI 6 uses the newest SAMA
+[Monthly Statistical Bulletin](https://www.sama.gov.sa/ar-sa/statistics/pages/monthlystatistics.aspx)
+workbook discovered at each refresh: the monthly Grand Total of Table 20
+(letters of credit settled and bills received) and Table 21 (new letters of
+credit opened), in SAR million, one `SourceTable` label each. Table 22 has no
+monthly data and is not loaded.
 Other KPIs appear in the status table as unavailable until their source routes
 and access are verified. KPI 10 (MISA) remains excluded by instruction.
 Green indicates a configured extraction succeeded; red indicates a failed or

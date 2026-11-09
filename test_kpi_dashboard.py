@@ -36,7 +36,45 @@ from kpi_dashboard import (
     extract_sama_pos_text,
     extract_yamama_cement,
     sama_pos_report_urls,
+    extract_sama_private_imports,
+    latest_sama_bulletin_url,
+    KPI06_SHEETS,
 )
+
+
+class SamaPrivateImportsTests(unittest.TestCase):
+    def _workbook(self) -> bytes:
+        from datetime import datetime
+        workbook = Workbook()
+        workbook.remove(workbook.active)
+        for name, offset in (("20", 0), ("21", 1000)):
+            sheet = workbook.create_sheet(name)
+            sheet.append(["Table"])
+            sheet.append(["Period", None, "Grand", "Total"][:2] + ["Other", "Grand"])
+            sheet.append([1993, None, 1, offset + 111])
+            sheet.append([datetime(2024, 12, 31), None, 1, offset + 222])
+            sheet.append(["Q1", 1993, 1, offset + 333])
+            sheet.append([datetime(2026, 8, 31), None, 1, offset + 5])
+            sheet.append([datetime(2026, 9, 30), None, 1, None])
+        buffer = BytesIO()
+        workbook.save(buffer)
+        return buffer.getvalue()
+
+    def test_extracts_monthly_grand_total_only(self) -> None:
+        facts = extract_sama_private_imports(self._workbook(), "https://example/file.xlsx")
+        self.assertEqual(len(facts), 2)
+        by_table = {fact["SourceTable"]: fact for fact in facts}
+        self.assertEqual(set(by_table), set(KPI06_SHEETS.values()))
+        self.assertEqual(by_table[KPI06_SHEETS["20"]]["Value"], 5.0)
+        self.assertEqual(by_table[KPI06_SHEETS["21"]]["Value"], 1005.0)
+        self.assertEqual(by_table[KPI06_SHEETS["20"]]["PeriodStart"], "2026-08-01")
+
+    def test_picks_newest_bulletin(self) -> None:
+        page = (
+            b'{"FileRef":"\\u002far-sa\\u002fStatistics\\u002fMonthlyStatistics\\u002fMonthly_Statistical_Bulletin_For_Aug_2026.xlsx"}'
+            b'{"FileRef":"/ar-sa/Statistics/MonthlyStatistics/Monthly_Statistical_Bulletin_For_Sep_2026.xlsx"}'
+        )
+        self.assertTrue(latest_sama_bulletin_url(page).endswith("For_Sep_2026.xlsx"))
 
 
 class GastatTotalExportsTests(unittest.TestCase):

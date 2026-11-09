@@ -130,6 +130,15 @@ DATASAUDI_SAIBOR_URL = (
 )
 DATASAUDI_SAIBOR_PAGE = "https://datasaudi.sa/ar/#lending-rates"
 SAMA_MONTHLY_STATS_PAGE = "https://www.sama.gov.sa/en-US/Statistics/Pages/MonthlyStatistics.aspx"
+SAMA_KPI06_SOURCE_PAGE = "https://www.sama.gov.sa/ar-sa/statistics/pages/monthlystatistics.aspx"
+KPI06_SHEETS = {
+    "20": "Private Sector Imports Financed Through Commercial Banks  (Letters of Credit Settled and Bills Received)",
+    "21": "Private Sector Imports Financed Through Commercial Banks  (New Letters of Credit Opened)",
+}
+KPI06_NOTE = (
+    "Monthly Grand Total from SAMA Monthly Statistical Bulletin Tables 20 and 21 (newest bulletin workbook "
+    "discovered on the SAMA page at refresh). Table 22 (by exporting countries) has no monthly data and is not loaded."
+)
 SAMA_POS_PAGE = "https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/POS.aspx"
 YAMAMA_CEMENT_URL = "https://www.yamamacement.com/ar/Reports/FullReport"
 ARGAAM_CEMENT_REFERENCE_URL = "https://www.argaam.com/ar/financial-reports/cement-monthly-report/2026/66"
@@ -306,10 +315,15 @@ def apply_configured_source_metadata(catalog: list[dict[str, Any]], sources: dic
             source_page_url = GASTAT_KPI08_SOURCE_PAGE
             route = f"GASTAT monthly ITR workbook: {url}"
             note = KPI08_ITR_NOTE if kpi_id == "KPI_08" else KPI11_ITR_NOTE
+        elif kpi_id == "KPI_06":
+            url = (sources.get(kpi_id, {}).get("ExtractedDataURL") or SAMA_KPI06_SOURCE_PAGE)
+            source_page_url = SAMA_KPI06_SOURCE_PAGE
+            route = f"Newest SAMA monthly statistical bulletin workbook discovered from: {source_page_url}"
+            note = KPI06_NOTE
         elif kpi_id == "KPI_16":
             url = DATASAUDI_CAPEX_URL
             source_page_url = DATASAUDI_CAPEX_PAGE
-            route = f"DataSaudi Public Finances API: {url}"
+            route =  f"DataSaudi Public Finances API: {url}"
             note = DATASAUDI_CAPEX_NOTE
         elif kpi_id == "KPI_13":
             source = sources.get(kpi_id, {})
@@ -464,6 +478,61 @@ def latest_sts_workbook_url(page: bytes) -> str:
     if latest is None:
         raise ValueError("No monthly STS workbook was found on the GASTAT statistics page.")
     return latest[1]
+
+
+def latest_sama_bulletin_url(page: bytes) -> str:
+    html = unescape(page.decode("utf-8", "replace")).replace(r"\u002f", "/")
+    latest: tuple[tuple[int, int], str] | None = None
+    for path in dict.fromkeys(re.findall(r'"FileRef"\s*:\s*"([^"]+\.xlsx)"', html, flags=re.IGNORECASE)):
+        if "monthly_statistical_bulletin" not in path.lower():
+            continue
+        match = MONTHLY_FILE_PERIOD.search(unquote(path).rsplit("/", 1)[-1])
+        if not match:
+            continue
+        period = (int(match.group(2)), ITR_MONTH_NAMES.index(match.group(1).lower()) + 1)
+        if latest is None or period > latest[0]:
+            latest = (period, urljoin(SAMA_KPI06_SOURCE_PAGE, path))
+    if latest is None:
+        raise ValueError("No monthly statistical bulletin workbook was found on the SAMA page.")
+    return latest[1]
+
+
+def extract_sama_private_imports(content: bytes, source_url: str) -> list[dict[str, Any]]:
+    try:
+        workbook = load_workbook(BytesIO(content), data_only=True, read_only=True)
+    except Exception as error:
+        raise ValueError(f"Unable to read SAMA monthly bulletin workbook: {error}") from error
+
+    facts: list[dict[str, Any]] = []
+    for sheet_name, source_table in KPI06_SHEETS.items():
+        if sheet_name not in workbook.sheetnames:
+            raise ValueError(f"SAMA bulletin workbook has no sheet {sheet_name}.")
+        rows = list(workbook[sheet_name].iter_rows(values_only=True))
+        total_column = None
+        for row in rows[:14]:
+            for index, cell in enumerate(row):
+                if isinstance(cell, str) and cell.strip().lower() == "grand":
+                    total_column = index
+        if total_column is None:
+            raise ValueError(f"SAMA bulletin sheet {sheet_name} has no Grand Total column.")
+        # Annual, quarterly and monthly blocks are stacked; monthly dates follow the quarterly rows.
+        monthly = False
+        for row in rows:
+            label = row[0] if row else None
+            if isinstance(label, str) and re.fullmatch(r"Q[1-4]", label.strip()):
+                monthly = True
+                continue
+            if not monthly or not isinstance(label, datetime):
+                continue
+            value = row[total_column] if total_column < len(row) else None
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                facts.append(make_fact(
+                    "KPI_06", label.year, label.month, value, "SAR million", source_table,
+                    source_url, KPI06_NOTE,
+                ))
+    if not facts:
+        raise ValueError("SAMA bulletin sheets 20 and 21 contain no monthly observations.")
+    return facts
 
 
 def extract_gfcf_imports(payload: dict[str, Any], source_url: str) -> list[dict[str, Any]]:
@@ -1449,8 +1518,15 @@ class MartService:
         except (OSError, ValueError, KeyError, IndexError) as error:
             errors["KPI_13"] = str(error)
 
+        try:
+            bulletin_url = latest_sama_bulletin_url(download_bytes(SAMA_KPI06_SOURCE_PAGE))
+            extracted["KPI_06"] = extract_sama_private_imports(fetch(bulletin_url), bulletin_url)
+            notes["KPI_06"] = KPI06_NOTE
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            errors["KPI_06"] = str(error)
+
         replace_ids = {
-            "KPI_01", "KPI_02", "KPI_03", "KPI_04", "KPI_05", "KPI_07", "KPI_08",
+            "KPI_01", "KPI_02", "KPI_03", "KPI_04", "KPI_05", "KPI_06", "KPI_07", "KPI_08",
             "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_14", "KPI_15", "KPI_16"
         }
         successful = {
@@ -1471,7 +1547,9 @@ class MartService:
                 self._data["sources"].setdefault("KPI_16", {"KPI_ID": "KPI_16"})["ExtractedDataURL"] = DATASAUDI_CAPEX_URL
             if "KPI_13" in successful:
                 self._data["sources"].setdefault("KPI_13", {"KPI_ID": "KPI_13"})["ExtractedDataURL"] = permits_url
-            for kpi_id in (*DATABASE_REPORT_URLS, "KPI_08", "KPI_11", "KPI_16"):
+            if "KPI_06" in successful:
+                self._data["sources"].setdefault("KPI_06", {"KPI_ID": "KPI_06"})["ExtractedDataURL"] = bulletin_url
+            for kpi_id in (*DATABASE_REPORT_URLS, "KPI_06", "KPI_08", "KPI_11", "KPI_16"):
                 if kpi_id in successful:
                     periods = sorted(
                         f"{row['Year']}-{row['MonthName']}"
@@ -1585,7 +1663,7 @@ class MartService:
                     "observedTo": source.get("ObservedTo"),
                     "sourceAccessStatus": source.get("ExtractionStatus"),
                     "liveExtractionConfigured": kpi_id in {
-                        "KPI_01", "KPI_02", "KPI_03", "KPI_04", "KPI_05", "KPI_07", "KPI_08",
+                        "KPI_01", "KPI_02", "KPI_03", "KPI_04", "KPI_05", "KPI_06", "KPI_07", "KPI_08",
                         "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_14", "KPI_15", "KPI_16"
                     },
                 }
