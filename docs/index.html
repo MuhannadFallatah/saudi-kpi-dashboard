@@ -5,18 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Saudi KPI Data Monitor</title>
 <style>
-:root{font-family:Segoe UI,Arial,sans-serif;color:#172337;background:#f3f6fb}
-*{box-sizing:border-box}body{margin:0}.top{background:#102844;color:#fff;padding:24px max(22px,calc((100vw - 1200px)/2))}
-.top h1{margin:0;font-size:25px}.top p{margin:8px 0 0;color:#cbd6e2}.wrap{max-width:1200px;margin:24px auto;padding:0 20px}
+:root{font-family:Segoe UI,Arial,sans-serif;color:#1b3327;background:#f3fcf6}
+*{box-sizing:border-box}body{margin:0}.top{background:#14573a;color:#fff;padding:24px max(22px,calc((100vw - 1200px)/2));border-bottom:4px solid #1b8354}
+.top h1{margin:0;font-size:25px}.top p{margin:8px 0 0;color:#dff6e7}.wrap{max-width:1200px;margin:24px auto;padding:0 20px}
 .notice{background:#fff7df;border:1px solid #f0d58b;color:#624b08;border-radius:10px;padding:14px 16px;line-height:1.5}
-.toolbar{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0;align-items:center}.btn{border:0;border-radius:8px;padding:10px 14px;font-weight:650;background:#1670d2;color:#fff;text-decoration:none}
-.btn.secondary{background:#e8eef5;color:#18324f}.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0}
-.stat,.tablebox{background:#fff;border:1px solid #e1e8f0;border-radius:12px}.stat{padding:16px}.stat small{color:#66758a}.stat strong{display:block;font-size:23px;margin-top:6px}
-.tablebox{overflow:auto}table{width:100%;border-collapse:collapse;min-width:900px}th,td{text-align:left;padding:12px 13px;border-bottom:1px solid #edf1f5;vertical-align:top}
-th{font-size:12px;text-transform:uppercase;color:#65758a;background:#f8fafc;position:sticky;top:0}td{font-size:13px}
+.toolbar{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0;align-items:center}.btn{border:0;border-radius:8px;padding:10px 14px;font-weight:650;background:#166a45;color:#fff;text-decoration:none;cursor:pointer}
+.btn:hover{background:#104631}.btn.secondary{background:#dff6e7;color:#104631}.btn.secondary:hover{background:#c9ebd5}.btn:disabled{opacity:.65;cursor:wait}:focus-visible{outline:3px solid #b78a24;outline-offset:3px}.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0}
+.stat,.tablebox{background:#fff;border:1px solid #d5e8dc;border-radius:12px}.stat{padding:16px}.stat small{color:#496354}.stat strong{display:block;font-size:23px;margin-top:6px;color:#14573a}
+.tablebox{overflow:auto}table{width:100%;border-collapse:collapse;min-width:900px}th,td{text-align:left;padding:12px 13px;border-bottom:1px solid #e7f1ea;vertical-align:top}
+th{font-size:12px;text-transform:uppercase;color:#315d45;background:#f0f8f2;position:sticky;top:0}td{font-size:13px}
 .status{display:inline-flex;align-items:center;gap:7px;font-weight:700;white-space:nowrap}.dot{height:10px;width:10px;border-radius:50%;display:inline-block}
-.green .dot{background:#168344}.red .dot{background:#d53b3b}.muted,.foot{color:#758398}.muted{direction:rtl;display:inline-block}
-a{color:#1268ba}.foot{font-size:12px;margin:14px 2px;line-height:1.5}#message{margin-left:auto;color:#40536b}
+.green .dot{background:#168344}.red .dot{background:#d53b3b}.muted,.foot{color:#586e60}.muted{direction:rtl;display:inline-block}
+a{color:#166a45}.foot{font-size:12px;margin:14px 2px;line-height:1.5}#message{margin-left:auto;color:#496354}
 @media(max-width:700px){.stats{grid-template-columns:1fr}.top h1{font-size:21px}}
 </style>
 </head>
