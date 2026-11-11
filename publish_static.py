@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import gzip
 import json
 import os
 from datetime import datetime
@@ -53,6 +54,68 @@ def build_refresh_log(snapshot: dict[str, Any], generated_at: str) -> dict[str, 
     }
 
 
+def archive_daily_snapshot(
+    archive_dir: Path,
+    status: dict[str, Any],
+    facts: list[dict[str, Any]],
+    generated_at: str,
+) -> dict[str, Any]:
+    archive_date = datetime.fromisoformat(generated_at).date().isoformat()
+    archive_dir.mkdir(parents=True, exist_ok=True)
+    archive_path = archive_dir / f"{archive_date}.json.gz"
+    index_path = archive_dir / "index.json"
+    created = not archive_path.exists()
+
+    if created:
+        payload = {
+            "archiveDate": archive_date,
+            "archivedAt": generated_at,
+            "factCount": len(facts),
+            "status": status,
+            "facts": facts,
+        }
+        temporary = archive_path.with_suffix(archive_path.suffix + ".tmp")
+        temporary.write_bytes(
+            gzip.compress(
+                json.dumps(payload, ensure_ascii=False, indent=2, allow_nan=False).encode("utf-8"),
+                compresslevel=9,
+                mtime=0,
+            )
+        )
+        temporary.replace(archive_path)
+
+    if index_path.exists():
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        if not isinstance(index, dict) or not isinstance(index.get("snapshots"), list):
+            raise ValueError(f"Invalid archive index: {index_path}")
+    else:
+        index = {"snapshots": []}
+
+    snapshots = {item["date"]: item for item in index["snapshots"]}
+    if archive_date not in snapshots:
+        if not created:
+            with gzip.open(archive_path, "rt", encoding="utf-8") as archived_file:
+                archived = json.load(archived_file)
+        else:
+            archived = payload
+        archived_status = archived["status"]
+        snapshots[archive_date] = {
+            "date": archive_date,
+            "archivedAt": archived["archivedAt"],
+            "factCount": archived["factCount"],
+            "kpiCount": len(archived_status.get("kpis", [])),
+            "url": f"{archive_date}.json.gz",
+        }
+
+    index["snapshots"] = sorted(snapshots.values(), key=lambda item: item["date"], reverse=True)
+    write_json(index_path, index)
+    return {
+        "date": archive_date,
+        "created": created,
+        "factCount": snapshots[archive_date]["factCount"],
+    }
+
+
 def main() -> None:
     DATA.mkdir(parents=True, exist_ok=True)
     service = MartService(WORKBOOK_PATH, REFRESH_MINUTES)
@@ -72,6 +135,12 @@ def main() -> None:
             + " This GitHub Pages deployment serves static JSON; it does not provide a running Python API."
         ),
     }
+    archive = archive_daily_snapshot(
+        DOCS / "archive",
+        status,
+        service.facts_for(),
+        generated_at,
+    )
 
     write_json(DATA / "status.json", status)
     write_json(DATA / "refresh-logs.json", build_refresh_log(status, generated_at))
@@ -113,6 +182,9 @@ def main() -> None:
                 "redCount": sum(kpi["refreshStatus"] == "red" for kpi in snapshot["kpis"]),
                 "sourceWorkbook": str(WORKBOOK_PATH),
                 "excelBytes": excel_path.stat().st_size,
+                "archiveDate": archive["date"],
+                "archiveCreated": archive["created"],
+                "archiveFactCount": archive["factCount"],
             },
             ensure_ascii=False,
         )

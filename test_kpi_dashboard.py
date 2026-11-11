@@ -10,7 +10,7 @@ from urllib.request import Request, urlopen
 
 from openpyxl import Workbook, load_workbook
 
-from publish_static import build_refresh_log
+from publish_static import archive_daily_snapshot, build_refresh_log
 from kpi_dashboard import (
     DashboardHandler,
     MartService,
@@ -237,6 +237,51 @@ class RefreshLogTests(unittest.TestCase):
         self.assertEqual(log["entries"][0]["timestamp"], "2026-11-04T08:00:00+03:00")
         self.assertEqual(log["entries"][1]["detail"], "Source timed out")
         self.assertEqual(log["entries"][1]["timestamp"], "2026-11-04T08:00:00+03:00")
+
+
+class DailyArchiveTests(unittest.TestCase):
+    def test_creates_one_immutable_snapshot_per_riyadh_date(self) -> None:
+        import gzip
+
+        with tempfile.TemporaryDirectory() as directory:
+            archive_dir = Path(directory)
+            status = {"kpis": [{"id": "KPI_01"}]}
+            facts = [{"KPI_ID": "KPI_01", "Value": 10}]
+            first = archive_daily_snapshot(
+                archive_dir, status, facts, "2026-11-11T10:07:00+03:00"
+            )
+            path = archive_dir / "2026-11-11.json.gz"
+            with gzip.open(path, "rt", encoding="utf-8") as file:
+                archived = json.load(file)
+            second = archive_daily_snapshot(
+                archive_dir, status, [{"KPI_ID": "KPI_01", "Value": 99}],
+                "2026-11-11T15:00:00+03:00",
+            )
+
+            self.assertTrue(first["created"])
+            self.assertEqual(archived["facts"], facts)
+            self.assertFalse(second["created"])
+            with gzip.open(path, "rt", encoding="utf-8") as file:
+                self.assertEqual(json.load(file)["facts"], facts)
+
+            index = json.loads((archive_dir / "index.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(index["snapshots"]), 1)
+            self.assertEqual(index["snapshots"][0]["factCount"], 1)
+
+    def test_indexes_snapshots_in_newest_first_order(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive_dir = Path(directory)
+            for timestamp in (
+                "2026-11-10T10:07:00+03:00",
+                "2026-11-11T10:07:00+03:00",
+            ):
+                archive_daily_snapshot(archive_dir, {"kpis": []}, [], timestamp)
+
+            index = json.loads((archive_dir / "index.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                [item["date"] for item in index["snapshots"]],
+                ["2026-11-11", "2026-11-10"],
+            )
 
 
 class DataSaudiCapexTests(unittest.TestCase):
