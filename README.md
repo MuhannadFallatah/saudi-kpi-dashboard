@@ -33,6 +33,11 @@ The compressed snapshot contains the prior KPI status and all facts, is
 retained permanently in the repository, and is available from the dashboard's
 Archive page. A manual rerun on the same Riyadh date does not replace that
 day's first snapshot.
+Each workflow refresh also appends its per-KPI outcomes to
+`docs/refresh-history/`, including manual and push-triggered runs. These
+timestamped records are retained permanently and are separate from the
+once-daily fact archive. `docs/data/refresh-logs.json` remains the latest-run
+view.
 
 ## Included extractors and status meaning
 
@@ -91,6 +96,7 @@ refresh. The exporter produces:
 
 - `docs/data/status.json`
 - `docs/data/refresh-logs.json` (latest result per KPI; see `docs/logs.html`)
+- `docs/refresh-history/index.json` and one JSON log snapshot per workflow run
 - `docs/data/facts.json`
 - `docs/data/kpi/KPI_01.json` through `KPI_16.json` and `docs/data/kpi/index.json`
 - `docs/data/Saudi_KPI_Extract.xlsx`

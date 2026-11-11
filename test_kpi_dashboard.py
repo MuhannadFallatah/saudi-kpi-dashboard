@@ -10,7 +10,12 @@ from urllib.request import Request, urlopen
 
 from openpyxl import Workbook, load_workbook
 
-from publish_static import archive_daily_snapshot, build_refresh_log, load_pre_refresh_snapshot
+from publish_static import (
+    archive_daily_snapshot,
+    archive_refresh_run,
+    build_refresh_log,
+    load_pre_refresh_snapshot,
+)
 from kpi_dashboard import (
     DashboardHandler,
     MartService,
@@ -237,6 +242,42 @@ class RefreshLogTests(unittest.TestCase):
         self.assertEqual(log["entries"][0]["timestamp"], "2026-11-04T08:00:00+03:00")
         self.assertEqual(log["entries"][1]["detail"], "Source timed out")
         self.assertEqual(log["entries"][1]["timestamp"], "2026-11-04T08:00:00+03:00")
+
+    def test_archives_every_workflow_run_and_indexes_newest_first(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            history = Path(directory)
+            older_log = {
+                "generatedAt": "2026-11-11T08:00:00+03:00",
+                "summary": {"kpiCount": 16, "successCount": 14, "failedCount": 2},
+                "entries": [{"kpiId": "KPI_01", "status": "green"}],
+            }
+            newer_log = {
+                "generatedAt": "2026-11-11T09:00:00+03:00",
+                "summary": {"kpiCount": 16, "successCount": 15, "failedCount": 1},
+                "entries": [{"kpiId": "KPI_01", "status": "green"}],
+            }
+            older = archive_refresh_run(history, older_log, "101", "51", "1", "schedule")
+            newer = archive_refresh_run(history, newer_log, "102", "52", "1", "push")
+            repeated = archive_refresh_run(history, older_log, "101", "51", "1", "schedule")
+            retry_log = {
+                **older_log,
+                "generatedAt": "2026-11-11T08:30:00+03:00",
+            }
+            retry = archive_refresh_run(history, retry_log, "101", "51", "2", "schedule")
+
+            index = json.loads((history / "index.json").read_text(encoding="utf-8"))
+            self.assertEqual(
+                [(run["runId"], run["attempt"]) for run in index["runs"]],
+                [("102", "1"), ("101", "2"), ("101", "1")],
+            )
+            self.assertEqual(older["event"], "schedule")
+            self.assertEqual(newer["event"], "push")
+            self.assertEqual(repeated, older)
+            self.assertEqual(retry["attempt"], "2")
+            self.assertEqual(
+                json.loads((history / older["url"]).read_text(encoding="utf-8"))["log"],
+                older_log,
+            )
 
 
 class DailyArchiveTests(unittest.TestCase):

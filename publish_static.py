@@ -4,10 +4,12 @@ from __future__ import annotations
 import gzip
 import json
 import os
+import re
 import warnings
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
+from uuid import uuid4
 
 from kpi_dashboard import MartService, RIYADH_TZ, WORKBOOK_PATH, download_bytes
 
@@ -55,6 +57,60 @@ def build_refresh_log(snapshot: dict[str, Any], generated_at: str) -> dict[str, 
         },
         "entries": entries,
     }
+
+
+def archive_refresh_run(
+    history_dir: Path,
+    refresh_log: dict[str, Any],
+    run_id: str,
+    run_number: str,
+    attempt: str,
+    event: str,
+) -> dict[str, Any]:
+    generated_at = refresh_log["generatedAt"]
+    timestamp = datetime.fromisoformat(generated_at).strftime("%Y%m%dT%H%M%S%z")
+    safe_run_id = re.sub(r"[^A-Za-z0-9._-]", "-", run_id) or uuid4().hex
+    history_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_name = f"{timestamp}-{safe_run_id}-{attempt}.json"
+    snapshot_path = history_dir / snapshot_name
+    index_path = history_dir / "index.json"
+    record = {
+        "historyId": f"{run_id}-{attempt}",
+        "generatedAt": generated_at,
+        "runId": run_id,
+        "runNumber": run_number,
+        "attempt": attempt,
+        "event": event,
+        "summary": refresh_log["summary"],
+        "url": snapshot_name,
+    }
+
+    if snapshot_path.exists():
+        existing = json.loads(snapshot_path.read_text(encoding="utf-8"))
+        if existing != {"run": record, "log": refresh_log}:
+            raise FileExistsError(f"Refresh history snapshot already exists: {snapshot_path}")
+    else:
+        write_json(snapshot_path, {"run": record, "log": refresh_log})
+
+    if index_path.exists():
+        index = json.loads(index_path.read_text(encoding="utf-8"))
+        if not isinstance(index, dict) or not isinstance(index.get("runs"), list):
+            raise ValueError(f"Invalid refresh history index: {index_path}")
+    else:
+        index = {"runs": []}
+
+    runs_by_id = {
+        entry.get("historyId", f"{entry['runId']}-{entry.get('attempt', '1')}"): entry
+        for entry in index["runs"]
+    }
+    runs_by_id[record["historyId"]] = record
+    index["runs"] = sorted(
+        runs_by_id.values(),
+        key=lambda entry: (entry["generatedAt"], entry["runId"], entry["attempt"]),
+        reverse=True,
+    )
+    write_json(index_path, index)
+    return record
 
 
 def archive_daily_snapshot(
@@ -185,7 +241,16 @@ def main() -> None:
     }
 
     write_json(DATA / "status.json", status)
-    write_json(DATA / "refresh-logs.json", build_refresh_log(status, generated_at))
+    refresh_log = build_refresh_log(status, generated_at)
+    write_json(DATA / "refresh-logs.json", refresh_log)
+    history_entry = archive_refresh_run(
+        DOCS / "refresh-history",
+        refresh_log,
+        os.environ.get("GITHUB_RUN_ID", f"local-{uuid4().hex}"),
+        os.environ.get("GITHUB_RUN_NUMBER", "local"),
+        os.environ.get("GITHUB_RUN_ATTEMPT", "1"),
+        os.environ.get("GITHUB_EVENT_NAME", "local"),
+    )
     write_json(DATA / "facts.json", {"count": snapshot["factCount"], "data": service.facts_for()})
 
     kpi_dir = DATA / "kpi"
@@ -227,6 +292,7 @@ def main() -> None:
                 "archiveDate": archive["date"],
                 "archiveCreated": archive["created"],
                 "archiveFactCount": archive["factCount"],
+                "refreshHistoryRun": history_entry["runId"],
             },
             ensure_ascii=False,
         )
