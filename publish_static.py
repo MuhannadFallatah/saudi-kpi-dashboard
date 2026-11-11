@@ -116,15 +116,64 @@ def archive_daily_snapshot(
     }
 
 
+def load_pre_refresh_snapshot(
+    archive_dir: Path,
+    data_dir: Path,
+    archive_date: str,
+    fallback_status: dict[str, Any],
+    fallback_facts: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    earlier_archives = sorted(
+        path
+        for path in archive_dir.glob("????-??-??.json.gz")
+        if path.name[:-8] < archive_date
+    ) if archive_dir.exists() else []
+    if earlier_archives:
+        with gzip.open(earlier_archives[-1], "rt", encoding="utf-8") as archived_file:
+            archived = json.load(archived_file)
+        status = archived.get("status")
+        facts = archived.get("facts")
+        if not isinstance(status, dict) or not isinstance(facts, list):
+            raise ValueError(f"Invalid pre-refresh archive snapshot: {earlier_archives[-1]}")
+        return status, facts
+
+    status_path = data_dir / "status.json"
+    facts_path = data_dir / "facts.json"
+    if status_path.exists() and facts_path.exists():
+        status = json.loads(status_path.read_text(encoding="utf-8"))
+        facts_payload = json.loads(facts_path.read_text(encoding="utf-8"))
+        facts = facts_payload.get("data") if isinstance(facts_payload, dict) else None
+        if not isinstance(status, dict) or not isinstance(facts, list):
+            raise ValueError(f"Invalid previously published KPI data in {data_dir}.")
+        return status, facts
+
+    return fallback_status, fallback_facts
+
+
 def main() -> None:
     DATA.mkdir(parents=True, exist_ok=True)
     service = MartService(WORKBOOK_PATH, REFRESH_MINUTES)
+    generated_at = datetime.now(RIYADH_TZ).isoformat(timespec="seconds")
+    archive_date = datetime.fromisoformat(generated_at).date().isoformat()
+    pre_refresh_status, pre_refresh_facts = load_pre_refresh_snapshot(
+        DOCS / "archive",
+        DATA,
+        archive_date,
+        service.snapshot(),
+        service.facts_for(),
+    )
+    archive = archive_daily_snapshot(
+        DOCS / "archive",
+        pre_refresh_status,
+        pre_refresh_facts,
+        generated_at,
+    )
+
     result = service.refresh(live=True)
     if not result["ok"]:
         raise RuntimeError(result["message"])
 
     snapshot = service.snapshot()
-    generated_at = datetime.now(RIYADH_TZ).isoformat(timespec="seconds")
     status = {
         **snapshot,
         "generatedAt": generated_at,
@@ -135,12 +184,6 @@ def main() -> None:
             + " This GitHub Pages deployment serves static JSON; it does not provide a running Python API."
         ),
     }
-    archive = archive_daily_snapshot(
-        DOCS / "archive",
-        status,
-        service.facts_for(),
-        generated_at,
-    )
 
     write_json(DATA / "status.json", status)
     write_json(DATA / "refresh-logs.json", build_refresh_log(status, generated_at))

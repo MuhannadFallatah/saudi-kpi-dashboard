@@ -27,11 +27,12 @@ can select the newest release: SAMA's latest POS PDFs, GASTAT's latest monthly
 ITR workbook for KPIs 08 and 11, and GASTAT's latest monthly STS workbook for
 KPI 13. A Pages deployment is not a continuously running Python service:
 JSON endpoints are static files, and there is no POST refresh API.
-Each successful workflow run creates one compressed full-data snapshot per
-Riyadh calendar date under `docs/archive/`. The snapshot contains the KPI
-status and all facts, is retained permanently in the repository, and is
-available from the dashboard's Archive page. A manual rerun on the same Riyadh
-date does not replace that day's first snapshot.
+Before refreshing, each successful workflow run archives the latest
+pre-refresh full dataset once per Riyadh calendar date under `docs/archive/`.
+The compressed snapshot contains the prior KPI status and all facts, is
+retained permanently in the repository, and is available from the dashboard's
+Archive page. A manual rerun on the same Riyadh date does not replace that
+day's first snapshot.
 
 ## Included extractors and status meaning
 

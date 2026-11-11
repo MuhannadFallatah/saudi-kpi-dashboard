@@ -10,7 +10,7 @@ from urllib.request import Request, urlopen
 
 from openpyxl import Workbook, load_workbook
 
-from publish_static import archive_daily_snapshot, build_refresh_log
+from publish_static import archive_daily_snapshot, build_refresh_log, load_pre_refresh_snapshot
 from kpi_dashboard import (
     DashboardHandler,
     MartService,
@@ -282,6 +282,52 @@ class DailyArchiveTests(unittest.TestCase):
                 [item["date"] for item in index["snapshots"]],
                 ["2026-11-11", "2026-11-10"],
             )
+
+    def test_loads_latest_prior_archive_before_daily_refresh(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            archive_dir = root / "archive"
+            data_dir = root / "data"
+            prior_status = {"generatedAt": "2026-11-10T10:07:00+03:00", "kpis": []}
+            prior_facts = [{"KPI_ID": "KPI_01", "Value": 10}]
+            archive_daily_snapshot(
+                archive_dir, prior_status, prior_facts, "2026-11-10T10:07:00+03:00"
+            )
+
+            status, facts = load_pre_refresh_snapshot(
+                archive_dir,
+                data_dir,
+                "2026-11-11",
+                {"generatedAt": "fallback"},
+                [{"KPI_ID": "KPI_01", "Value": 20}],
+            )
+
+            self.assertEqual(status, prior_status)
+            self.assertEqual(facts, prior_facts)
+
+    def test_uses_published_data_when_no_older_archive_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            data_dir = root / "data"
+            data_dir.mkdir()
+            status = {"generatedAt": "2026-11-10T10:07:00+03:00", "kpis": []}
+            facts = [{"KPI_ID": "KPI_01", "Value": 10}]
+            (data_dir / "status.json").write_text(json.dumps(status), encoding="utf-8")
+            (data_dir / "facts.json").write_text(
+                json.dumps({"count": len(facts), "data": facts}),
+                encoding="utf-8",
+            )
+
+            archived_status, archived_facts = load_pre_refresh_snapshot(
+                root / "archive",
+                data_dir,
+                "2026-11-11",
+                {"generatedAt": "fallback"},
+                [],
+            )
+
+            self.assertEqual(archived_status, status)
+            self.assertEqual(archived_facts, facts)
 
 
 class DataSaudiCapexTests(unittest.TestCase):
