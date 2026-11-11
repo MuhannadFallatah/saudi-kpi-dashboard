@@ -3,20 +3,21 @@ name: Refresh and publish Saudi KPI dashboard
 on:
   workflow_dispatch:
   schedule:
-    - cron: "7 * * * *"
+    - cron: "7 7 * * *"
   push:
     branches: [main]
     paths:
       - ".github/workflows/publish.yml"
       - "docs/index.html"
       - "docs/logs.html"
+      - "docs/archive.html"
       - "kpi_dashboard.py"
       - "publish_static.py"
       - "requirements.txt"
       - "Saudi_16_KPI_Data_Mart.xlsx"
 
 permissions:
-  contents: read
+  contents: write
   pages: write
   id-token: write
 
@@ -45,6 +46,17 @@ jobs:
           KPI_REFRESH_MINUTES: "1440"
           PYTHONUTF8: "1"
         run: python publish_static.py
+      - name: Commit daily archive
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add docs/archive
+          if git diff --cached --quiet; then
+            echo "Today's archive already exists."
+          else
+            git commit -m "Archive daily KPI snapshot"
+            git push
+          fi
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
       - name: Upload static site
