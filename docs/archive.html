@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Daily Archive | Saudi KPI Data Monitor</title>
+<style>
+@font-face{font-family:"IBM Plex Sans Arabic";src:url("IBMPlexSansArabic-Regular.ttf") format("truetype");font-style:normal;font-weight:400;font-display:swap}
+@font-face{font-family:"IBM Plex Sans Arabic";src:url("IBMPlexSansArabic-Bold.ttf") format("truetype");font-style:normal;font-weight:700;font-display:swap}
+:root{font-family:"IBM Plex Sans Arabic",Segoe UI,Arial,sans-serif;color:#241c16;background:#f2ecda}
+*{box-sizing:border-box}body{margin:0}.top{background:#092b21;color:#f2ecda;padding:24px max(22px,calc((100vw - 1200px)/2));border-bottom:4px solid #b4975a}
+.top h1{margin:0;font-size:25px}.top p{margin:8px 0 0;color:#d9e5dd}.wrap{max-width:1200px;margin:24px auto;padding:0 20px}
+.toolbar{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0;align-items:center}.btn{border:0;border-radius:8px;padding:10px 14px;font-family:inherit;font-size:14px;font-weight:700;background:#00714d;color:#fff;text-decoration:none;cursor:pointer}
+.btn:hover{background:#173e35}.btn.secondary{background:#d9e5dd;color:#092b21}.btn.secondary:hover{background:#c2d6c9}:focus-visible{outline:3px solid #8a6e3d;outline-offset:3px}
+.tablebox{overflow:auto;background:#fff;border:1px solid #d9e5dd;border-radius:12px}table{width:100%;border-collapse:collapse;min-width:650px}
+th,td{text-align:left;padding:12px 13px;border-bottom:1px solid #d9e5dd;vertical-align:top}th{font-size:12px;text-transform:uppercase;color:#173e35;background:#d9e5dd}td{font-size:14px}
+.notice{padding:14px 16px;background:#d9e5dd;border:1px solid #b9c9bf;border-radius:10px;color:#173e35;line-height:1.5}.foot{font-size:12px;color:#173e35;margin:14px 2px;line-height:1.5}
+@media(max-width:700px){.top h1{font-size:21px}}
+</style>
+</head>
+<body>
+<header class="top"><h1>Daily KPI Archive</h1><p>One permanent full-data snapshot per Riyadh calendar date</p></header>
+<main class="wrap">
+<p id="notice" class="notice" role="status">Loading archive…</p>
+<div class="toolbar">
+<a class="btn secondary" href="./">Back to dashboard</a>
+<a class="btn secondary" href="archive/index.json">Archive index JSON</a>
+</div>
+<div class="tablebox"><table><thead><tr><th>Archive date</th><th>Captured (Riyadh)</th><th>KPIs</th><th>Fact observations</th><th>Snapshot</th></tr></thead><tbody id="rows"></tbody></table></div>
+<p class="foot">Each compressed JSON snapshot contains the complete KPI status and fact records captured during the first successful archive run that day. Snapshots are retained in the repository; reruns on the same Riyadh date do not replace them.</p>
+</main>
+<script>
+function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+function ksa(v){
+ if(!v)return '—';
+ const d=new Date(v);
+ return isNaN(d)?String(v):d.toLocaleString('en-GB',{timeZone:'Asia/Riyadh',year:'numeric',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:true}).replace(/\b(am|pm)\b/i,m=>m.toUpperCase());
+}
+async function load(){
+ const response=await fetch('archive/index.json?t='+Date.now(),{cache:'no-store'});
+ if(!response.ok)throw new Error('Archive index unavailable (HTTP '+response.status+').');
+ const index=await response.json();
+ const snapshots=Array.isArray(index.snapshots)?index.snapshots:[];
+ document.getElementById('notice').textContent=snapshots.length
+  ? snapshots.length+' daily snapshot'+(snapshots.length===1?'':'s')+' available. Most recent: '+snapshots[0].date+'.'
+  : 'No archived snapshots yet. The first is created after the next successful daily refresh.';
+ document.getElementById('rows').innerHTML=snapshots.length?snapshots.map(item=>`<tr>
+ <td><strong>${esc(item.date)}</strong></td><td>${esc(ksa(item.archivedAt))}</td>
+ <td>${Number(item.kpiCount||0).toLocaleString()}</td><td>${Number(item.factCount||0).toLocaleString()}</td>
+ <td><a href="archive/${encodeURIComponent(item.url)}" download="${esc(item.url)}">Download full snapshot (.json.gz)</a></td></tr>`).join('')
+ : '<tr><td colspan="5">No snapshots available yet.</td></tr>';
+}
+load().catch(error=>{document.getElementById('notice').textContent=error.message});
+</script>
+</body>
+</html>
