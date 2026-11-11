@@ -283,29 +283,28 @@ class DailyArchiveTests(unittest.TestCase):
                 ["2026-11-11", "2026-11-10"],
             )
 
-    def test_loads_latest_prior_archive_before_daily_refresh(self) -> None:
+    def test_uses_current_published_dataset_for_pre_refresh_archive(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            archive_dir = root / "archive"
-            data_dir = root / "data"
-            prior_status = {"generatedAt": "2026-11-10T10:07:00+03:00", "kpis": []}
-            prior_facts = [{"KPI_ID": "KPI_01", "Value": 10}]
-            archive_daily_snapshot(
-                archive_dir, prior_status, prior_facts, "2026-11-10T10:07:00+03:00"
-            )
-
+            data_dir = Path(directory) / "data"
+            published_status = {"generatedAt": "2026-11-11T10:07:00+03:00", "kpis": []}
+            published_facts = [{"KPI_ID": "KPI_01", "Value": 10}]
+            responses = {
+                "https://muhannadfallatah.github.io/saudi-kpi-dashboard/data/status.json":
+                    json.dumps(published_status).encode("utf-8"),
+                "https://muhannadfallatah.github.io/saudi-kpi-dashboard/data/facts.json":
+                    json.dumps({"count": len(published_facts), "data": published_facts}).encode("utf-8"),
+            }
             status, facts = load_pre_refresh_snapshot(
-                archive_dir,
                 data_dir,
-                "2026-11-11",
                 {"generatedAt": "fallback"},
                 [{"KPI_ID": "KPI_01", "Value": 20}],
+                fetch=lambda url: responses[url],
             )
 
-            self.assertEqual(status, prior_status)
-            self.assertEqual(facts, prior_facts)
+            self.assertEqual(status, published_status)
+            self.assertEqual(facts, published_facts)
 
-    def test_uses_published_data_when_no_older_archive_exists(self) -> None:
+    def test_falls_back_to_local_data_when_site_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             data_dir = root / "data"
@@ -318,13 +317,16 @@ class DailyArchiveTests(unittest.TestCase):
                 encoding="utf-8",
             )
 
-            archived_status, archived_facts = load_pre_refresh_snapshot(
-                root / "archive",
-                data_dir,
-                "2026-11-11",
-                {"generatedAt": "fallback"},
-                [],
-            )
+            def unavailable(_url: str) -> bytes:
+                raise OSError("site unavailable")
+
+            with self.assertWarns(RuntimeWarning):
+                archived_status, archived_facts = load_pre_refresh_snapshot(
+                    data_dir,
+                    {"generatedAt": "fallback"},
+                    [],
+                    fetch=unavailable,
+                )
 
             self.assertEqual(archived_status, status)
             self.assertEqual(archived_facts, facts)

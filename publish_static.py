@@ -4,17 +4,20 @@ from __future__ import annotations
 import gzip
 import json
 import os
+import warnings
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
-from kpi_dashboard import MartService, RIYADH_TZ, WORKBOOK_PATH
+from kpi_dashboard import MartService, RIYADH_TZ, WORKBOOK_PATH, download_bytes
 
 
 ROOT = Path(__file__).resolve().parent
 DOCS = ROOT / "docs"
 DATA = DOCS / "data"
 REFRESH_MINUTES = max(1, int(os.environ.get("KPI_REFRESH_MINUTES", "1440")))
+PUBLISHED_STATUS_URL = "https://muhannadfallatah.github.io/saudi-kpi-dashboard/data/status.json"
+PUBLISHED_FACTS_URL = "https://muhannadfallatah.github.io/saudi-kpi-dashboard/data/facts.json"
 
 
 def write_json(path: Path, payload: object) -> None:
@@ -117,25 +120,23 @@ def archive_daily_snapshot(
 
 
 def load_pre_refresh_snapshot(
-    archive_dir: Path,
     data_dir: Path,
-    archive_date: str,
     fallback_status: dict[str, Any],
     fallback_facts: list[dict[str, Any]],
+    fetch: Callable[[str], bytes] = download_bytes,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
-    earlier_archives = sorted(
-        path
-        for path in archive_dir.glob("????-??-??.json.gz")
-        if path.name[:-8] < archive_date
-    ) if archive_dir.exists() else []
-    if earlier_archives:
-        with gzip.open(earlier_archives[-1], "rt", encoding="utf-8") as archived_file:
-            archived = json.load(archived_file)
-        status = archived.get("status")
-        facts = archived.get("facts")
+    try:
+        status = json.loads(fetch(PUBLISHED_STATUS_URL))
+        facts_payload = json.loads(fetch(PUBLISHED_FACTS_URL))
+        facts = facts_payload.get("data") if isinstance(facts_payload, dict) else None
         if not isinstance(status, dict) or not isinstance(facts, list):
-            raise ValueError(f"Invalid pre-refresh archive snapshot: {earlier_archives[-1]}")
+            raise ValueError("Published pre-refresh KPI status or facts have an invalid format.")
         return status, facts
+    except (OSError, ValueError) as error:
+        warnings.warn(
+            f"Could not load the current published dataset for pre-refresh archiving: {error}",
+            RuntimeWarning,
+        )
 
     status_path = data_dir / "status.json"
     facts_path = data_dir / "facts.json"
@@ -156,9 +157,7 @@ def main() -> None:
     generated_at = datetime.now(RIYADH_TZ).isoformat(timespec="seconds")
     archive_date = datetime.fromisoformat(generated_at).date().isoformat()
     pre_refresh_status, pre_refresh_facts = load_pre_refresh_snapshot(
-        DOCS / "archive",
         DATA,
-        archive_date,
         service.snapshot(),
         service.facts_for(),
     )
