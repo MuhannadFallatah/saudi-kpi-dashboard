@@ -25,7 +25,7 @@ th{font-size:12px;text-transform:uppercase;color:#173e35;background:#d9e5dd;posi
 <body>
 <header class="top">
 <h1>Refresh Logs</h1>
-<p>Latest published extraction result for each KPI</p>
+<p>Latest published KPI results and retained refresh-run history</p>
 </header>
 <main class="wrap">
 <div id="notice" class="stat">Loading refresh log…</div>
@@ -33,6 +33,7 @@ th{font-size:12px;text-transform:uppercase;color:#173e35;background:#d9e5dd;posi
 <div class="toolbar">
 <a class="btn secondary" href="./">Back to dashboard</a>
 <a class="btn secondary" href="data/refresh-logs.json">Log JSON</a>
+<a class="btn secondary" href="refresh-history/index.json">History index JSON</a>
 <button class="btn" id="reloadBtn" type="button">Reload logs</button>
 <span id="message" aria-live="polite"></span>
 </div>
@@ -51,7 +52,14 @@ th{font-size:12px;text-transform:uppercase;color:#173e35;background:#d9e5dd;posi
 <table><thead><tr><th>Checked (Riyadh)</th><th>KPI</th><th>Status</th><th>Observations</th><th>Latest data</th><th>Details</th></tr></thead>
 <tbody id="rows"></tbody></table>
 </div>
-<p class="foot">This static page displays the most recently published refresh results, not the full GitHub Actions console output or historical run archive. A new deployment replaces this log with the latest result. Red includes failed extraction, unavailable connector, and intentional exclusion.</p>
+<h2>Refresh run history</h2>
+<p id="historyNotice" class="foot">Loading retained refresh runs…</p>
+<div id="historyError" class="alert" hidden></div>
+<div class="tablebox">
+<table><thead><tr><th>Run time (Riyadh)</th><th>Run</th><th>Trigger</th><th>Successful KPIs</th><th>Failed / excluded</th><th>Snapshot</th></tr></thead>
+<tbody id="historyRows"></tbody></table>
+</div>
+<p class="foot">The top table shows the latest result per KPI. The history table retains each workflow run and retry; download a JSON file for its per-KPI outcomes. History is committed to the repository and retained permanently. Red includes failed extraction, unavailable connector, and intentional exclusion.</p>
 </main>
 <script>
 let entries=[];
@@ -83,6 +91,28 @@ async function load(){
  const error=document.getElementById('runError');
  if(d.lastError){error.hidden=false;error.textContent='Refresh-level error: '+d.lastError}else{error.hidden=true;error.textContent=''}
  render();
+ try{
+  const historyResponse=await fetch('refresh-history/index.json?t='+Date.now(),{cache:'no-store'});
+  if(!historyResponse.ok)throw new Error('Refresh history unavailable (HTTP '+historyResponse.status+').');
+  const history=await historyResponse.json();
+  const runs=Array.isArray(history.runs)?history.runs:[];
+  document.getElementById('historyNotice').textContent=runs.length
+   ?runs.length+' workflow run'+(runs.length===1?'':'s')+' retained; newest: '+ksa(runs[0].generatedAt)+'.'
+   :'No historical refresh runs have been recorded yet.';
+  document.getElementById('historyRows').innerHTML=runs.length?runs.map(run=>`<tr>
+   <td>${esc(ksa(run.generatedAt))}</td>
+   <td><strong>${esc(run.runNumber||run.runId)}</strong>${run.attempt&&run.attempt!=='1'?' · attempt '+esc(run.attempt):''}</td>
+   <td>${esc(run.event||'—')}</td>
+   <td>${Number(run.summary?.successCount||0).toLocaleString()}</td>
+   <td>${Number(run.summary?.failedCount||0).toLocaleString()}</td>
+   <td><a href="refresh-history/${encodeURIComponent(run.url)}">View run log</a></td></tr>`).join('')
+   :'<tr><td colspan="6">No archived refresh runs.</td></tr>';
+  document.getElementById('historyError').hidden=true;
+ }catch(e){
+  const historyError=document.getElementById('historyError');
+  historyError.hidden=false;historyError.textContent=e.message;
+  document.getElementById('historyNotice').textContent='Historical run data could not be loaded.';
+ }
 }
 document.getElementById('reloadBtn').onclick=async function(){
  const btn=this,msg=document.getElementById('message');btn.disabled=true;msg.textContent='Loading…';
