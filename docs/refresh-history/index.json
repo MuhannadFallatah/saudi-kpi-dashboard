@@ -1,6 +1,20 @@
 {
   "runs": [
     {
+      "historyId": "43226783122-1",
+      "generatedAt": "2026-11-12T16:25:02+03:00",
+      "runId": "43226783122",
+      "runNumber": "110",
+      "attempt": "1",
+      "event": "workflow_dispatch",
+      "summary": {
+        "kpiCount": 16,
+        "successCount": 15,
+        "failedCount": 1
+      },
+      "url": "20261112T162502+0300-43226783122-1.json"
+    },
+    {
       "historyId": "43053483601-1",
       "generatedAt": "2026-11-11T18:59:09+03:00",
       "runId": "43053483601",
