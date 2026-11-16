@@ -5,6 +5,7 @@ import unittest
 from http.server import ThreadingHTTPServer
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -21,6 +22,7 @@ from kpi_dashboard import (
     MartService,
     DATASAUDI_CAPEX_PAGE,
     DATASAUDI_CAPEX_URL,
+    WORKBOOK_PATH,
     GASTAT_KPI08_SOURCE_PAGE,
     GASTAT_KPI13_SOURCE_PAGE,
     ITR_WORKBOOK_URL,
@@ -38,6 +40,7 @@ from kpi_dashboard import (
     extract_investing_cds,
     merge_cds_history,
     extract_datasaudi_tasi,
+    workbook_data,
     extract_sama_pos_text,
     extract_yamama_cement,
     sama_pos_report_urls,
@@ -45,6 +48,38 @@ from kpi_dashboard import (
     latest_sama_bulletin_url,
     KPI06_SHEETS,
 )
+
+
+class TasiInitialBaselineTests(unittest.TestCase):
+    def test_daily_initial_load_covers_full_source_history(self) -> None:
+        rows = [
+            fact for fact in workbook_data(WORKBOOK_PATH)["facts"]
+            if fact["KPI_ID"] == "KPI_15"
+        ]
+        periods = [fact["PeriodStart"][:10] for fact in rows]
+        self.assertEqual(len(rows), 4958)
+        self.assertEqual(len(set(periods)), 4958)
+        self.assertEqual(min(periods), "2007-01-06")
+        self.assertEqual(max(periods), "2026-11-15")
+        self.assertTrue(all(fact["Value"] == fact["Close"] for fact in rows))
+        self.assertTrue(all(fact["Unit"] == "index points" for fact in rows))
+
+    def test_failed_live_refresh_preserves_daily_baseline(self) -> None:
+        service = MartService(WORKBOOK_PATH, 1440)
+        with (
+            patch("kpi_dashboard.download_bytes", side_effect=OSError("source unavailable")),
+            patch("kpi_dashboard.post_json", side_effect=OSError("source unavailable")),
+        ):
+            result = service.refresh(live=True)
+
+        self.assertTrue(result["ok"])
+        rows = service.facts_for("KPI_15")
+        self.assertEqual(len(rows), 4958)
+        self.assertEqual(rows[0]["PeriodStart"][:10], "2007-01-06")
+        self.assertEqual(rows[-1]["PeriodStart"][:10], "2026-11-15")
+        kpi = next(item for item in service.snapshot()["kpis"] if item["id"] == "KPI_15")
+        self.assertEqual(kpi["refreshLabel"], "Historical baseline loaded")
+        self.assertFalse(kpi["liveExtractionConfigured"])
 
 
 class SamaPrivateImportsTests(unittest.TestCase):

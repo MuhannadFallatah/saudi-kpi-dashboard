@@ -100,6 +100,15 @@ DATASAUDI_TASI_URL = (
     "?cube=tadawul_indicators&drilldowns=Indicator%2CMonth&measures=Value&locale=en"
 )
 DATASAUDI_TASI_PAGE = "https://datasaudi.sa/en/#tadawul-indicators"
+SAUDI_EXCHANGE_TASI_URL = (
+    "https://www.saudiexchange.sa/wps/portal/saudiexchange/newsandreports/"
+    "reports-publications/historical-reports?locale=en"
+)
+TASI_BASELINE_NOTE = (
+    "Daily TASI closes were initially loaded from the Saudi Exchange Historical Reports page "
+    "for 2007-01-06 through 2026-11-15 (4,958 observations). Automated requests to the page "
+    "return HTTP 403, so this historical baseline does not receive scheduled updates."
+)
 DATASAUDI_CAPEX_URL = (
     "https://api.datasaudi.sa/tesseract/data.jsonrecords"
     "?cube=mof_government_revenues_expenditures_quarter"
@@ -334,6 +343,11 @@ def apply_configured_source_metadata(catalog: list[dict[str, Any]], sources: dic
                 "The newest monthly workbook linked on the GASTAT STS statistics page is selected at refresh; "
                 "Table 7 contains issued building permits, and starred 2026 values are preliminary."
             )
+        elif kpi_id == "KPI_15":
+            url = SAUDI_EXCHANGE_TASI_URL
+            source_page_url = SAUDI_EXCHANGE_TASI_URL
+            route = "One-time daily historical baseline from the Saudi Exchange Historical Reports page"
+            note = TASI_BASELINE_NOTE
         elif kpi_id in DATABASE_REPORT_URLS:
             url = DATABASE_REPORT_URLS[kpi_id]
             source_page_url = url
@@ -355,11 +369,26 @@ def apply_configured_source_metadata(catalog: list[dict[str, Any]], sources: dic
                 "APIMatchStatus": "Verified API",
                 "ExtractionStatus": "Live API extraction configured",
             })
+        if kpi_id == "KPI_15":
+            item.update({
+                "Source": "Saudi Exchange",
+                "Frequency_or_TimeFrame": "Daily",
+                "APIMatchStatus": "Historical report; no automated API verified",
+                "Access_Caveat": (
+                    "Automated requests to the historical reports page return HTTP 403; "
+                    "scheduled updates are not configured."
+                ),
+                "ExtractionStatus": "Historical baseline loaded; live refresh unavailable",
+            })
         source = sources.setdefault(kpi_id, {"KPI_ID": kpi_id})
         source.update({
             "PrimarySourceURL": source_page_url,
             "ExtractedDataURL": url,
-            "ExtractionStatus": "Live API extraction configured" if kpi_id == "KPI_16" else "Extracted",
+            "ExtractionStatus": (
+                "Live API extraction configured" if kpi_id == "KPI_16"
+                else "Historical baseline loaded; live refresh unavailable" if kpi_id == "KPI_15"
+                else "Extracted"
+            ),
             "ExtractionNote": note,
         })
 
@@ -1416,15 +1445,6 @@ class MartService:
             errors["KPI_09"] = str(error)
 
         try:
-            extracted["KPI_15"] = extract_datasaudi_tasi(fetch(DATASAUDI_TASI_URL))
-            notes["KPI_15"] = (
-                "Extracted DataSaudi's monthly Tadawul All Share Index level (Tadawul Indicators table, "
-                "'Index' indicator); monthly rather than daily."
-            )
-        except (OSError, ValueError, KeyError, IndexError) as error:
-            errors["KPI_15"] = str(error)
-
-        try:
             extracted["KPI_16"] = extract_datasaudi_capex(fetch(DATASAUDI_CAPEX_URL))
             notes["KPI_16"] = DATASAUDI_CAPEX_NOTE
         except (OSError, ValueError, KeyError, IndexError) as error:
@@ -1527,7 +1547,7 @@ class MartService:
 
         replace_ids = {
             "KPI_01", "KPI_02", "KPI_03", "KPI_04", "KPI_05", "KPI_06", "KPI_07", "KPI_08",
-            "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_14", "KPI_15", "KPI_16"
+            "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_14", "KPI_16"
         }
         successful = {
             kpi_id: rows for kpi_id, rows in extracted.items()
@@ -1589,6 +1609,15 @@ class MartService:
                         "status": "green",
                         "label": "Live extraction succeeded",
                         "note": notes.get(kpi_id, "Extracted from the configured official source workbook."),
+                        "checkedAt": timestamp,
+                    }
+                elif kpi_id == "KPI_15" and any(
+                    fact.get("KPI_ID") == "KPI_15" for fact in self._data["facts"]
+                ):
+                    self._refresh_states[kpi_id] = {
+                        "status": "green",
+                        "label": "Historical baseline loaded",
+                        "note": TASI_BASELINE_NOTE,
                         "checkedAt": timestamp,
                     }
                 elif kpi_id in replace_ids:
@@ -1664,7 +1693,7 @@ class MartService:
                     "sourceAccessStatus": source.get("ExtractionStatus"),
                     "liveExtractionConfigured": kpi_id in {
                         "KPI_01", "KPI_02", "KPI_03", "KPI_04", "KPI_05", "KPI_06", "KPI_07", "KPI_08",
-                        "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_14", "KPI_15", "KPI_16"
+                        "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_14", "KPI_16"
                     },
                 }
             )
@@ -1684,7 +1713,9 @@ class MartService:
                 "from GASTAT for KPIs 05, 07, and 12 (fixed database-report routes), reads the newest monthly "
                 "ITR workbook for KPIs 08 and 11 and the newest monthly STS workbook for KPI 13 from their "
                 "GASTAT statistics pages, and uses DataSaudi's Ministry of Finance "
-                "quarterly capital-expenditure series for KPI 16. "
+                "quarterly capital-expenditure series for KPI 16. KPI 15 contains a one-time daily "
+                "Saudi Exchange historical baseline; automated refresh is unavailable because the source "
+                "page returns HTTP 403 to unattended requests. "
                 "Other KPIs need verified provider-specific connectors."
             ),
             "factCount": len(facts),

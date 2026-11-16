@@ -54,8 +54,10 @@ tenor is not specified by the source), and KPI 14 (Investing.com daily Saudi
 user-provided CSV covering 2025-01-01 through 2026-11-04. The CSV is not read
 on recurring runs; existing workbook history is retained while successful
 live observations may be added. The page exposes only about one month and may
-block runners), and KPI 15 (DataSaudi's monthly Tadawul All Share Index level;
-monthly, not daily).
+block runners), and KPI 15 (4,958 daily TASI closing values initially loaded
+from the Saudi Exchange Historical Reports page, covering 2007-01-06 through
+2026-11-15). The page returns HTTP 403 to unattended requests, so KPI 15 is a
+static historical baseline and is not updated by scheduled refreshes.
 KPIs 05, 07 and 12 use GASTAT monthly trade database reports. KPIs 08 and 11
 use the newest monthly ITR workbook linked on GASTAT's [monthly goods-trade
 statistics page](https://www.stats.gov.sa/ar/statistics-tabs?tab=436312&category=123481).
