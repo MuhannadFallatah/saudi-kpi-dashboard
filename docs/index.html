@@ -17,7 +17,7 @@
 .tablebox{overflow:auto}table{width:100%;border-collapse:collapse;min-width:900px}th,td{text-align:left;padding:12px 13px;border-bottom:1px solid #d9e5dd;vertical-align:top}
 th{font-size:12px;text-transform:uppercase;color:#173e35;background:#d9e5dd;position:sticky;top:0}td{font-size:13px}
 .status{display:inline-flex;align-items:center;gap:7px;font-weight:700;white-space:nowrap}.dot{height:10px;width:10px;border-radius:50%;display:inline-block}
-.green .dot{background:#00714d}.red .dot{background:#a6433d}.muted,.foot{color:#173e35}.muted{direction:rtl;display:inline-block}
+.green .dot{background:#00714d}.red .dot{background:#a6433d}.muted,.foot{color:#173e35}.muted{direction:rtl;display:inline-block}.measure-source{display:block;color:#173e35;font-size:11px;direction:ltr}
 a{color:#00714d}.foot{font-size:12px;margin:14px 2px;line-height:1.5}#message{margin-left:auto;color:#173e35}
 @media(max-width:700px){.stats{grid-template-columns:1fr}.top h1{font-size:21px}}
 </style>
@@ -43,7 +43,7 @@ a{color:#00714d}.foot{font-size:12px;margin:14px 2px;line-height:1.5}#message{ma
 <div class="stat"><small>Last extraction (Riyadh time)</small><strong id="lastRefresh">—</strong></div>
 </section>
 <div class="tablebox"><table><thead><tr>
-<th>Refresh status</th><th>KPI</th><th>Source</th><th>Frequency</th><th>Records</th><th>Latest data</th><th>Last extracted (Riyadh)</th><th>Refresh details</th>
+<th>Refresh status</th><th>KPI</th><th>Source</th><th>Frequency</th><th>Records</th><th>Latest data</th><th>Latest value (unit)</th><th>Last extracted (Riyadh)</th><th>Refresh details</th>
 </tr></thead><tbody id="rows"></tbody></table></div>
 <p class="foot">Green indicates a successful extraction from a configured source workbook. Red indicates a failed or unavailable connector, no loaded observations, or intentional exclusion. The report URLs for GASTAT are fixed; MOF report links are discovered automatically; verify the latest observation date. This GitHub Pages site is static: JSON is served as files, not through a live Python API. Source extraction runs automatically in GitHub Actions every hour; this page reloads the latest published data every 5 minutes and when you click "Reload latest data". The repository and the site are public.</p>
 </main>
@@ -54,7 +54,7 @@ function ksa(v){
  return isNaN(d)?String(v):d.toLocaleString('en-GB',{timeZone:'Asia/Riyadh',year:'numeric',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit',hour12:true}).replace(/\b(am|pm)\b/i,m=>m.toUpperCase());
 }
 function esc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
-async function load(){
+function latestValue(k){  const values=Array.isArray(k.latestValues)?k.latestValues:[];  if(!values.length)return '—';  return values.map(v=>`<div>${Number(v.value).toLocaleString('en-US',{maximumFractionDigits:6})} ${esc(v.unit||'')}</div>${values.length>1&&v.sourceTable?`<span class="measure-source">${esc(v.sourceTable)}</span>`:''}`).join(''); } async function load(){
  const r=await fetch('data/status.json?t='+Date.now(),{cache:'no-store'});
  if(!r.ok)throw new Error('Status data not available (HTTP '+r.status+')');
  const d=await r.json();
@@ -69,7 +69,7 @@ async function load(){
  <td><strong>${esc(k.id)}</strong><br>${esc(k.name)}<br><span class="muted" lang="ar">${esc(k.nameArabic)}</span></td>
  <td>${k.sourceUrl?`<a href="${esc(k.sourceUrl)}" target="_blank" rel="noreferrer">${esc(k.source||'Source')}</a>`:esc(k.source||'Not specified')}</td>
  <td>${esc(k.frequency)}</td><td>${Number(k.observationCount).toLocaleString()}</td>
- <td>${esc(k.latestObservation||'—')}</td><td>${k.refreshStatus==='green'?esc(ksa(k.lastChecked||last)):''}</td><td>${esc(k.refreshNote||k.extractionStatus||'No extraction details')}</td></tr>`).join('');
+ <td>${esc(k.latestObservation||'—')}</td><td>${latestValue(k)}</td><td>${k.refreshStatus==='green'?esc(ksa(k.lastChecked||last)):''}</td><td>${esc(k.refreshNote||k.extractionStatus||'No extraction details')}</td></tr>`).join('');
 }
 load().catch(e=>document.getElementById('notice').textContent=e.message);
 
