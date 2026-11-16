@@ -1647,13 +1647,13 @@ class MartService:
             refresh_states = dict(self._refresh_states)
 
         counts: dict[str, int] = {}
-        latest: dict[str, str] = {}
+        latest: dict[str, str] = {}         latest_facts: dict[str, list[dict[str, Any]]] = {}
         for fact in facts:
             kpi_id = fact["KPI_ID"]
             counts[kpi_id] = counts.get(kpi_id, 0) + 1
             period = fact.get("PeriodEnd") or fact.get("PeriodStart") or ""
             if period and period > latest.get(kpi_id, ""):
-                latest[kpi_id] = period
+                latest[kpi_id] = period                 latest_facts[kpi_id] = [fact]             elif period and period == latest.get(kpi_id):                 latest_facts.setdefault(kpi_id, []).append(fact)
 
         kpis = []
         for item in catalog:
@@ -1680,7 +1680,7 @@ class MartService:
                     "frequency": frequency,
                     "extractionStatus": declared_status,
                     "observationCount": count,
-                    "latestObservation": latest.get(kpi_id),
+                    "latestObservation": latest.get(kpi_id),                     "latestValues": [                         {                             "value": fact.get("Value"),                             "unit": fact.get("Unit"),                             "sourceTable": fact.get("SourceTable"),                         }                         for fact in latest_facts.get(kpi_id, [])                     ],
                     "refreshStatus": status,
                     "refreshLabel": state.get("label") or (
                         "Excluded by request" if is_excluded else
