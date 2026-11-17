@@ -15,7 +15,7 @@
         "method": "GET",
         "header": [{ "key": "Accept", "value": "application/json" }],
         "url": { "raw": "{{baseUrl}}/data/kpi/{{kpiId}}.json", "host": ["{{baseUrl}}"], "path": ["data", "kpi", "{{kpiId}}.json"] },
-        "description": "Change the kpiId collection variable (KPI_01 ... KPI_16)."
+        "description": "Change the kpiId collection variable (KPI_01 ... KPI_16, or KPI_16_1 for the separate annual MOF series)."
       },
       "event": [{
         "listen": "test",
@@ -46,7 +46,7 @@
           "exec": [
             "const d = pm.response.json();",
             "pm.test('Status 200', () => pm.response.to.have.status(200));",
-            "pm.test('16 KPIs listed', () => pm.expect(d.length).to.eql(16));"
+            "pm.test('17 KPI series listed', () => pm.expect(d.length).to.eql(17));"
           ]
         }
       }]
@@ -65,7 +65,7 @@
           "exec": [
             "const d = pm.response.json();",
             "pm.test('Status 200', () => pm.response.to.have.status(200));",
-            "pm.test('16 KPIs returned', () => pm.expect(d.kpis.length).to.eql(16));",
+            "pm.test('17 KPI series returned', () => pm.expect(d.kpis.length).to.eql(17));",
             "pm.test('lastRefresh is Riyadh time (+03:00)', () => pm.expect(d.lastRefresh).to.match(/\\+03:00$/));",
             "pm.test('factCount matches', () => pm.expect(d.factCount).to.be.above(0));",
             "pm.test('Every KPI has a status', () => d.kpis.forEach(k => pm.expect(['green','red']).to.include(k.refreshStatus)));",

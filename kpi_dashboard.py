@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import threading
 import time
@@ -14,6 +15,7 @@ from html import unescape
 from io import BytesIO
 from datetime import date, datetime, timedelta, timezone
 from urllib.parse import quote, urlencode, urljoin
+from zipfile import BadZipFile
 
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
@@ -28,6 +30,7 @@ from urllib.request import Request, urlopen
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
+from openpyxl.utils.exceptions import InvalidFileException
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
 
@@ -45,6 +48,7 @@ ALLOWED_HOSTS = {
     "www.investing.com",
     "muhannadfallatah.github.io",
     "database.stats.gov.sa",
+    "www.mof.gov.sa",
 }
 GASTAT_DB_SELECT_URL = "https://database.stats.gov.sa/Build_Reports/flexmonster/select"
 GASTAT_IMPORTS_REPORT_URL = (
@@ -120,6 +124,15 @@ DATASAUDI_CAPEX_NOTE = (
     "Quarterly capital expenditures from DataSaudi's Public Finances series, sourced to the Ministry of Finance. "
     "Values are converted from SAR billions to SAR million."
 )
+MOF_PUBLIC_FINANCE_PAGE = "https://www.mof.gov.sa/ar/public-finance-data"
+MOF_CAPEX_URL = (
+    "https://www.mof.gov.sa/documents/519418/519420/dummy/"
+    "5fc04972-bbc7-17a8-8f43-272a933f526e?download=true"
+)
+MOF_CAPEX_NOTE = (
+    "Annual actual capital expenditures from MOF's Public Finance Data workbook, in SAR million. "
+    "The currently published workbook covers 1993-2020; later years are not included."
+)
 INVESTING_CDS_URL = "https://www.investing.com/rates-bonds/saudi-arabia-cds-5-year-usd-historical-data"
 INVESTING_CDS_PAGE = "https://www.investing.com/rates-bonds/saudi-arabia-cds-5-year-usd"
 PUBLISHED_KPI_URL = "https://muhannadfallatah.github.io/saudi-kpi-dashboard/data/kpi/{kpi_id}.json"
@@ -194,6 +207,7 @@ KPI_NAMES_EN = {
     "KPI_14": "Credit default swap (CDS) spreads",
     "KPI_15": "Tadawul All Share Index (TASI)",
     "KPI_16": "Government capital expenditure",
+    "KPI_16_1": "Government capital expenditure (MOF annual, KPI 16.1)",
 }
 KPI_SHEET_SLUGS = {
     "KPI_01": "PMI",
@@ -212,6 +226,7 @@ KPI_SHEET_SLUGS = {
     "KPI_14": "CDS_Spreads",
     "KPI_15": "TASI",
     "KPI_16": "Govt_Capex",
+    "KPI_16_1": "MOF_Capex",
 }
 MONTHS = {
     name.lower(): number
@@ -318,7 +333,7 @@ def download_bytes(url: str) -> bytes:
 
 
 def apply_configured_source_metadata(catalog: list[dict[str, Any]], sources: dict[str, dict[str, Any]]) -> None:
-    # KPIs 05, 07 and 12 use GASTAT reports; KPIs 08 and 11 use ITR; KPI 16 uses DataSaudi.
+    # KPI 16 uses DataSaudi; KPI 16.1 uses MOF's annual actual workbook.
     for item in catalog:
         kpi_id = item.get("KPI_ID")
         if kpi_id in {"KPI_08", "KPI_11"}:
@@ -336,6 +351,11 @@ def apply_configured_source_metadata(catalog: list[dict[str, Any]], sources: dic
             source_page_url = DATASAUDI_CAPEX_PAGE
             route =  f"DataSaudi Public Finances API: {url}"
             note = DATASAUDI_CAPEX_NOTE
+        elif kpi_id == "KPI_16_1":
+            url = MOF_CAPEX_URL
+            source_page_url = MOF_PUBLIC_FINANCE_PAGE
+            route = f"MOF annual actual public-finance workbook: {url}"
+            note = MOF_CAPEX_NOTE
         elif kpi_id == "KPI_13":
             source = sources.get(kpi_id, {})
             url = source.get("ExtractedDataURL") or item.get("VerifiedData_or_API_ReferenceURL")
@@ -361,7 +381,10 @@ def apply_configured_source_metadata(catalog: list[dict[str, Any]], sources: dic
             "SourceURL": source_page_url,
             "API_or_DataRoute": route,
             "VerifiedData_or_API_ReferenceURL": source_page_url,
-            "Access_Caveat": None,
+            "Access_Caveat": (
+                "The currently listed MOF actual-finances workbook ends in 2020."
+                if kpi_id == "KPI_16_1" else None
+            ),
             "ExtractionNote": note,
         })
         if kpi_id == "KPI_16":
@@ -370,6 +393,13 @@ def apply_configured_source_metadata(catalog: list[dict[str, Any]], sources: dic
                 "Frequency_or_TimeFrame": "Quarterly",
                 "APIMatchStatus": "Verified API",
                 "ExtractionStatus": "Live API extraction configured",
+            })
+        if kpi_id == "KPI_16_1":
+            item.update({
+                "Source": "Saudi Ministry of Finance (MOF)",
+                "Frequency_or_TimeFrame": "Annual",
+                "APIMatchStatus": "Verified official workbook",
+                "ExtractionStatus": "Live workbook extraction configured",
             })
         if kpi_id == "KPI_15":
             item.update({
@@ -388,6 +418,7 @@ def apply_configured_source_metadata(catalog: list[dict[str, Any]], sources: dic
             "ExtractedDataURL": url,
             "ExtractionStatus": (
                 "Live API extraction configured" if kpi_id == "KPI_16"
+                else "Live workbook extraction configured" if kpi_id == "KPI_16_1"
                 else "Historical baseline loaded; live refresh unavailable" if kpi_id == "KPI_15"
                 else "Extracted"
             ),
@@ -962,6 +993,98 @@ def extract_datasaudi_capex(content: bytes) -> list[dict[str, Any]]:
     if not rows:
         raise ValueError("DataSaudi public-finances response contains no capital-expenditure observations.")
     return [rows[period] for period in sorted(rows)]
+
+
+def extract_mof_annual_capex(content: bytes) -> list[dict[str, Any]]:
+    try:
+        workbook = load_workbook(BytesIO(content), read_only=True, data_only=True)
+    except (BadZipFile, InvalidFileException, OSError, ValueError) as error:
+        raise ValueError("MOF public-finance data is not a valid Excel workbook.") from error
+
+    try:
+        header_sheet = None
+        header_row = None
+        year_index = None
+        capex_index = None
+        year_headers = {"year", "calendar year", "السنة"}
+        capex_headers = {
+            "capital expenditure",
+            "capital expenditures",
+            "نفقات رأسمالية",
+            "النفقات الرأسمالية",
+        }
+        for sheet in workbook.worksheets:
+            for row_number, row in enumerate(sheet.iter_rows(values_only=True), start=1):
+                normalized = [
+                    " ".join(str(value).replace("\xa0", " ").casefold().split())
+                    if value is not None else ""
+                    for value in row
+                ]
+                year_columns = [index for index, value in enumerate(normalized) if value in year_headers]
+                capex_columns = [index for index, value in enumerate(normalized) if value in capex_headers]
+                if year_columns and capex_columns:
+                    if len(year_columns) != 1 or len(capex_columns) != 1:
+                        raise ValueError("MOF workbook has ambiguous year or capital-expenditure columns.")
+                    header_sheet = sheet
+                    header_row = row_number
+                    year_index = year_columns[0]
+                    capex_index = capex_columns[0]
+                    break
+            if header_sheet is not None:
+                break
+
+        if header_sheet is None or header_row is None or year_index is None or capex_index is None:
+            raise ValueError("MOF public-finance workbook is missing its year and capital-expenditure columns.")
+
+        rows: dict[int, dict[str, Any]] = {}
+        for row in header_sheet.iter_rows(min_row=header_row + 1, values_only=True):
+            if not row or all(value is None or not str(value).strip() for value in row):
+                continue
+            raw_year = row[year_index] if year_index < len(row) else None
+            if isinstance(raw_year, bool):
+                continue
+            if (
+                isinstance(raw_year, (int, float))
+                and math.isfinite(float(raw_year))
+                and float(raw_year).is_integer()
+            ):
+                year = int(raw_year)
+            elif isinstance(raw_year, str) and re.fullmatch(r"\d{4}", raw_year.strip()):
+                year = int(raw_year.strip())
+            else:
+                continue
+
+            value = row[capex_index] if capex_index < len(row) else None
+            if (
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(float(value))
+                or value < 0
+            ):
+                raise ValueError(f"MOF capital expenditures has an invalid value for {year}.")
+            if year in rows:
+                raise ValueError(f"MOF public-finance workbook repeats capital expenditures for {year}.")
+
+            fact = make_fact(
+                "KPI_16_1",
+                year,
+                1,
+                value,
+                "SAR million",
+                "MOF Public Finance Data - Actual Capital Expenditures",
+                MOF_CAPEX_URL,
+                MOF_CAPEX_NOTE,
+            )
+            fact["PeriodEnd"] = date(year, 12, 31).isoformat()
+            fact["Month"] = None
+            fact["MonthName"] = "Annual"
+            rows[year] = fact
+
+        if not rows:
+            raise ValueError("MOF public-finance workbook contains no annual capital-expenditure observations.")
+        return [rows[year] for year in sorted(rows)]
+    finally:
+        workbook.close()
 
 
 def sama_pos_report_urls(fetch, full_history: bool = False) -> list[str]:
@@ -1592,6 +1715,12 @@ class MartService:
             errors["KPI_16"] = str(error)
 
         try:
+            extracted["KPI_16_1"] = extract_mof_annual_capex(fetch(MOF_CAPEX_URL))
+            notes["KPI_16_1"] = MOF_CAPEX_NOTE
+        except (OSError, ValueError, KeyError, IndexError) as error:
+            errors["KPI_16_1"] = str(error)
+
+        try:
             cds = extract_investing_cds(fetch(INVESTING_CDS_URL))
             published_history: list[dict[str, Any]] = []
             try:
@@ -1726,7 +1855,7 @@ class MartService:
 
         replace_ids = {
             "KPI_01", "KPI_02", "KPI_03", "KPI_04", "KPI_05", "KPI_06", "KPI_07", "KPI_08",
-            "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_14", "KPI_16"
+            "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_14", "KPI_16", "KPI_16_1"
         }
         successful = {
             kpi_id: rows for kpi_id, rows in extracted.items()
@@ -1758,14 +1887,18 @@ class MartService:
                     self._data["sources"].setdefault(kpi_id, {"KPI_ID": kpi_id})["ExtractedDataURL"] = itr_source_url
             if "KPI_16" in successful:
                 self._data["sources"].setdefault("KPI_16", {"KPI_ID": "KPI_16"})["ExtractedDataURL"] = DATASAUDI_CAPEX_URL
+            if "KPI_16_1" in successful:
+                self._data["sources"].setdefault("KPI_16_1", {"KPI_ID": "KPI_16_1"})["ExtractedDataURL"] = MOF_CAPEX_URL
             if "KPI_13" in successful:
                 self._data["sources"].setdefault("KPI_13", {"KPI_ID": "KPI_13"})["ExtractedDataURL"] = permits_url
             if "KPI_06" in successful:
                 self._data["sources"].setdefault("KPI_06", {"KPI_ID": "KPI_06"})["ExtractedDataURL"] = bulletin_url
-            for kpi_id in (*DATABASE_REPORT_URLS, "KPI_06", "KPI_08", "KPI_11", "KPI_16"):
+            for kpi_id in (*DATABASE_REPORT_URLS, "KPI_06", "KPI_08", "KPI_11", "KPI_16", "KPI_16_1"):
                 if kpi_id in successful:
                     periods = sorted(
-                        f"{row['Year']}-{row['MonthName']}"
+                        f"{row['Year']}"
+                        if row.get("Month") is None and row.get("MonthName") == "Annual"
+                        else f"{row['Year']}-{row['MonthName']}"
                         if row.get("Month") is None and re.fullmatch(r"Q[1-4]", str(row.get("MonthName")))
                         else row["PeriodStart"][:7]
                         for row in successful[kpi_id]
@@ -1781,6 +1914,8 @@ class MartService:
                     item["API_or_DataRoute"] = f"GASTAT monthly ITR workbook: {itr_source_url}"
                 if kpi_id == "KPI_16" and kpi_id in successful:
                     item["API_or_DataRoute"] = f"DataSaudi Public Finances API: {DATASAUDI_CAPEX_URL}"
+                if kpi_id == "KPI_16_1" and kpi_id in successful:
+                    item["API_or_DataRoute"] = f"MOF annual actual public-finance workbook: {MOF_CAPEX_URL}"
                 if kpi_id == "KPI_13" and kpi_id in successful:
                     item["API_or_DataRoute"] = f"GASTAT STS workbook: {permits_url}"
                 if kpi_id == "KPI_10":
@@ -1898,7 +2033,7 @@ class MartService:
                     "sourceAccessStatus": source.get("ExtractionStatus"),
                     "liveExtractionConfigured": kpi_id in {
                         "KPI_01", "KPI_02", "KPI_03", "KPI_04", "KPI_05", "KPI_06", "KPI_07", "KPI_08",
-                        "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_14", "KPI_16"
+                        "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_14", "KPI_16", "KPI_16_1"
                     },
                 }
             )
@@ -1918,7 +2053,8 @@ class MartService:
                 "from GASTAT for KPIs 05, 07, and 12 (fixed database-report routes), reads the newest monthly "
                 "ITR workbook for KPIs 08 and 11 and the newest monthly STS workbook for KPI 13 from their "
                 "GASTAT statistics pages, and uses DataSaudi's Ministry of Finance "
-                "quarterly capital-expenditure series for KPI 16. KPI 15 contains a one-time daily "
+                "quarterly capital-expenditure series for KPI 16 and the separate annual actual MOF "
+                "capital-expenditure workbook for KPI 16.1. KPI 15 contains a one-time daily "
                 "Saudi Exchange historical baseline; automated refresh is unavailable because the source "
                 "page returns HTTP 403 to unattended requests. "
                 "Other KPIs need verified provider-specific connectors."
@@ -2027,7 +2163,7 @@ class MartService:
                 sheet.column_dimensions[get_column_letter(index)].width = min(max(width + 2, 10), 60)
 
         for kpi_id in KPI_NAMES_EN:
-            number = kpi_id.split("_")[1]
+            number = kpi_id[4:]
             add_table(
                 f"KPI_{number}_{KPI_SHEET_SLUGS[kpi_id]}",
                 [r for r in facts if r["KPI_ID"] == kpi_id],

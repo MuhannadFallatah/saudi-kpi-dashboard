@@ -23,12 +23,15 @@ from kpi_dashboard import (
     MartService,
     DATASAUDI_CAPEX_PAGE,
     DATASAUDI_CAPEX_URL,
+    MOF_CAPEX_URL,
+    MOF_PUBLIC_FINANCE_PAGE,
     WORKBOOK_PATH,
     GASTAT_KPI08_SOURCE_PAGE,
     GASTAT_KPI13_SOURCE_PAGE,
     ITR_WORKBOOK_URL,
     apply_configured_source_metadata,
     extract_datasaudi_capex,
+    extract_mof_annual_capex,
     extract_datasaudi_pmi,
     extract_gfcf_imports,
     extract_imports_cpc,
@@ -48,6 +51,7 @@ from kpi_dashboard import (
     extract_sama_private_imports,
     latest_sama_bulletin_url,
     KPI06_SHEETS,
+    KPI_NAMES_EN,
 )
 
 
@@ -488,6 +492,110 @@ class DataSaudiCapexTests(unittest.TestCase):
         }
         with self.assertRaises(ValueError):
             extract_datasaudi_capex(json.dumps(payload).encode())
+
+
+class MOFCapexTests(unittest.TestCase):
+    @staticmethod
+    def _workbook(
+        rows: list[tuple[object, ...]],
+        headers: tuple[str, ...] = ("Year", "Expenditure", "Capital Expenditures"),
+    ) -> bytes:
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "public finance"
+        sheet.append(["Actual public finance"])
+        sheet.append(headers)
+        for row in rows:
+            sheet.append(row)
+        content = BytesIO()
+        workbook.save(content)
+        return content.getvalue()
+
+    def test_extracts_sorted_annual_mof_capital_expenditure(self) -> None:
+        rows = extract_mof_annual_capex(self._workbook([
+            (2020, 1000, 155088),
+            (1993, 500, 3012),
+        ]))
+        self.assertEqual(
+            [
+                (row["KPI_ID"], row["Year"], row["PeriodStart"], row["PeriodEnd"],
+                 row["Month"], row["MonthName"], row["Value"], row["Unit"])
+                for row in rows
+            ],
+            [
+                ("KPI_16_1", 1993, "1993-01-01", "1993-12-31", None, "Annual", 3012.0, "SAR million"),
+                ("KPI_16_1", 2020, "2020-01-01", "2020-12-31", None, "Annual", 155088.0, "SAR million"),
+            ],
+        )
+        self.assertTrue(all(row["SourceURL"] == MOF_CAPEX_URL for row in rows))
+
+    def test_rejects_workbook_without_capital_expenditure_column(self) -> None:
+        with self.assertRaisesRegex(ValueError, "missing its year and capital-expenditure columns"):
+            extract_mof_annual_capex(
+                self._workbook([(2020, 1000)], headers=("Year", "Expenditure"))
+            )
+
+    def test_metadata_registers_mof_as_a_separate_annual_kpi(self) -> None:
+        catalog = [{"KPI_ID": "KPI_16_1"}]
+        sources = {}
+        apply_configured_source_metadata(catalog, sources)
+        self.assertEqual(catalog[0]["Source"], "Saudi Ministry of Finance (MOF)")
+        self.assertEqual(catalog[0]["SourceURL"], MOF_PUBLIC_FINANCE_PAGE)
+        self.assertEqual(catalog[0]["Frequency_or_TimeFrame"], "Annual")
+        self.assertIn("ends in 2020", catalog[0]["Access_Caveat"])
+        self.assertEqual(sources["KPI_16_1"]["PrimarySourceURL"], MOF_PUBLIC_FINANCE_PAGE)
+        self.assertEqual(sources["KPI_16_1"]["ExtractedDataURL"], MOF_CAPEX_URL)
+
+    def test_source_mart_and_excel_keep_kpi_16_series_separate(self) -> None:
+        facts = workbook_data(WORKBOOK_PATH)["facts"]
+        quarterly = [row for row in facts if row["KPI_ID"] == "KPI_16"]
+        annual = [row for row in facts if row["KPI_ID"] == "KPI_16_1"]
+        self.assertTrue(quarterly)
+        self.assertEqual(len(annual), 28)
+        self.assertEqual((annual[0]["Year"], annual[-1]["Year"]), (1993, 2020))
+        self.assertTrue(all(row["Month"] is None and row["MonthName"] == "Annual" for row in annual))
+        self.assertTrue(all(row["Unit"] == "SAR million" for row in annual))
+
+        service = MartService(WORKBOOK_PATH, refresh_minutes=60)
+        workbook = load_workbook(BytesIO(service.export_bytes()), data_only=True)
+        self.assertIn("KPI_16_Govt_Capex", workbook.sheetnames)
+        self.assertIn("KPI_16_1_MOF_Capex", workbook.sheetnames)
+        self.assertEqual(
+            list(workbook["KPI_16_1_MOF_Capex"].tables),
+            ["tbl_KPI_16_1_MOF_Capex"],
+        )
+        sheet = workbook["KPI_16_1_MOF_Capex"]
+        headers = [cell.value for cell in sheet[1]]
+        self.assertIn("KPI_Name", headers)
+        self.assertEqual(
+            sheet.cell(2, headers.index("KPI_Name") + 1).value,
+            KPI_NAMES_EN["KPI_16_1"],
+        )
+        self.assertEqual(sheet.max_row, 29)
+
+    def test_live_refresh_replaces_only_the_mof_series(self) -> None:
+        content = self._workbook([
+            (2019, 1000, 90000),
+            (2020, 1000, 100000),
+        ])
+
+        def download(url: str) -> bytes:
+            if url == MOF_CAPEX_URL:
+                return content
+            raise OSError("not mocked")
+
+        service = MartService(WORKBOOK_PATH, refresh_minutes=60)
+        with (
+            patch("kpi_dashboard.download_bytes", side_effect=download),
+            patch("kpi_dashboard.post_json", side_effect=OSError("not mocked")),
+        ):
+            service.refresh(live=True)
+
+        self.assertEqual(len(service.facts_for("KPI_16")), 39)
+        self.assertEqual(
+            [(row["Year"], row["Value"]) for row in service.facts_for("KPI_16_1")],
+            [(2019, 90000.0), (2020, 100000.0)],
+        )
 
 
 class DataSaudiPmiTests(unittest.TestCase):
@@ -1058,7 +1166,7 @@ class MartServiceTests(unittest.TestCase):
     def test_excel_export_has_one_named_table_per_kpi(self) -> None:
         workbook = load_workbook(BytesIO(self.service.export_bytes()), data_only=True)
         kpi_sheets = [name for name in workbook.sheetnames if name.startswith("KPI_")]
-        self.assertEqual(len(kpi_sheets), 16)
+        self.assertEqual(len(kpi_sheets), len(KPI_NAMES_EN))
         self.assertNotIn("Refresh_Status", workbook.sheetnames)
         self.assertNotIn("Fact_All", workbook.sheetnames)
         sheet = workbook["KPI_05_Total_Goods_Imports"]
@@ -1067,6 +1175,10 @@ class MartServiceTests(unittest.TestCase):
         headers = [cell.value for cell in sheet[1]]
         self.assertIn("KPI_Name", headers)
         self.assertEqual(sheet.cell(2, headers.index("KPI_Name") + 1).value, "Total goods imports")
+        self.assertEqual(
+            list(workbook["KPI_16_1_MOF_Capex"].tables),
+            ["tbl_KPI_16_1_MOF_Capex"],
+        )
 
     def test_excel_export_adds_kpi_names_to_component_sheets(self) -> None:
         self.service._data["components"] = [{"KPI_ID": "KPI_07", "Value": 1.0}]

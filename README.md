@@ -1,6 +1,7 @@
 # Saudi KPI Data Monitor — GitHub Pages
 
-This repository template provides a static dashboard for all 16 Saudi KPIs,
+This repository template provides a static dashboard for 16 Saudi KPI groups,
+including the separate annual MOF series KPI 16.1,
 plus a scheduled GitHub Actions job that extracts available official GASTAT
 workbooks and rebuilds the Excel and JSON downloads.
 
@@ -70,6 +71,12 @@ KPI 16 uses DataSaudi's
 [Public Finances](https://datasaudi.sa/ar/#public-finances) quarterly
 "Capital Expenditures" series, sourced to the Ministry of Finance. The
 DataSaudi API reports SAR billions; values are converted to SAR million.
+KPI 16.1 is a separate annual series extracted from the MOF
+[Public Finance Data](https://www.mof.gov.sa/ar/public-finance-data) workbook
+"Actual Public Finance Data." Its explicit capital-expenditure column is in
+SAR million and currently covers 1993–2020. It is exported separately from
+KPI 16 as `KPI_16_1.json` and in its own `KPI_16_1_MOF_Capex` worksheet/table;
+the workbook does not provide later actual years.
 KPI 6 uses the newest SAMA
 [Monthly Statistical Bulletin](https://www.sama.gov.sa/ar-sa/statistics/pages/monthlystatistics.aspx)
 workbook discovered at each refresh: the monthly Grand Total of Table 20
@@ -100,7 +107,8 @@ refresh. The exporter produces:
 - `docs/data/refresh-logs.json` (latest result per KPI; see `docs/logs.html`)
 - `docs/refresh-history/index.json` and one JSON log snapshot per workflow run
 - `docs/data/facts.json`
-- `docs/data/kpi/KPI_01.json` through `KPI_16.json` and `docs/data/kpi/index.json`
+- `docs/data/kpi/KPI_01.json` through `KPI_16.json`, plus `KPI_16_1.json`,
+  and `docs/data/kpi/index.json`
 - `docs/data/Saudi_KPI_Extract.xlsx`
 - `docs/archive/index.json` and one `docs/archive/YYYY-MM-DD.json.gz` full snapshot per day
 
