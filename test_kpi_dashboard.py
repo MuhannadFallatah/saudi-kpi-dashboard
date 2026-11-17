@@ -15,6 +15,7 @@ from publish_static import (
     archive_daily_snapshot,
     archive_refresh_run,
     build_refresh_log,
+    last_successful_archive_facts,
     load_pre_refresh_snapshot,
 )
 from kpi_dashboard import (
@@ -358,6 +359,27 @@ class DailyArchiveTests(unittest.TestCase):
                 [item["date"] for item in index["snapshots"]],
                 ["2026-11-11", "2026-11-10"],
             )
+
+    def test_loads_latest_successful_facts_when_newer_archive_is_red(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive_dir = Path(directory)
+            last_good_fact = {"KPI_ID": "KPI_02", "PeriodEnd": "2026-11-07", "Value": 250}
+            archive_daily_snapshot(
+                archive_dir,
+                {"kpis": [{"id": "KPI_02", "refreshStatus": "green", "observationCount": 1}]},
+                [last_good_fact],
+                "2026-11-14T10:07:00+03:00",
+            )
+            archive_daily_snapshot(
+                archive_dir,
+                {"kpis": [{"id": "KPI_02", "refreshStatus": "red", "observationCount": 0}]},
+                [],
+                "2026-11-15T10:07:00+03:00",
+            )
+
+            facts = last_successful_archive_facts(archive_dir, {"KPI_02"})
+
+            self.assertEqual(facts, [last_good_fact])
 
     def test_uses_current_published_dataset_for_pre_refresh_archive(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -714,6 +736,75 @@ class MartServiceTests(unittest.TestCase):
         self.assertEqual(result["kpis"][0]["frequency"], "Monthly")
         self.assertEqual(result["kpis"][1]["refreshLabel"], "Excluded by request")
         self.assertEqual(result["kpis"][1]["refreshStatus"], "red")
+
+    def test_status_includes_every_measure_for_the_latest_period(self) -> None:
+        second_measure = self.service._data["facts"][0].copy()
+        second_measure.update({"Value": 15.0, "SourceTable": "Second test table"})
+        self.service._data["facts"].append(second_measure)
+
+        kpi = self.service.snapshot()["kpis"][0]
+        self.assertEqual(kpi["latestValues"], [
+            {"value": 12.5, "unit": "SAR million", "sourceTable": "Test table"},
+            {"value": 15.0, "unit": "SAR million", "sourceTable": "Second test table"},
+        ])
+
+    def test_failed_kpi_uses_last_published_facts_without_changing_red_status(self) -> None:
+        kpi_id = "KPI_02"
+        catalog_item = self.service._data["catalog"][0].copy()
+        catalog_item.update({"KPI_ID": kpi_id, "KPI_Name_Original": "POS"})
+        self.service._data["catalog"].append(catalog_item)
+        self.service._refresh_states[kpi_id] = {
+            "status": "red",
+            "label": "Live extraction failed",
+            "note": "The source timed out.",
+        }
+        previous_fact = self.service._data["facts"][0].copy()
+        previous_fact.update({
+            "KPI_ID": kpi_id,
+            "Value": 250.0,
+            "Unit": "transactions",
+            "PeriodStart": "2026-10-25",
+            "PeriodEnd": "2026-10-31",
+        })
+
+        self.service.retain_last_known_facts([previous_fact])
+
+        kpi = next(item for item in self.service.snapshot()["kpis"] if item["id"] == kpi_id)
+        self.assertEqual(kpi["refreshStatus"], "red")
+        self.assertEqual(kpi["observationCount"], 1)
+        self.assertEqual(kpi["latestObservation"], "2026-10-31")
+        self.assertEqual(kpi["latestValues"], [
+            {"value": 250.0, "unit": "transactions", "sourceTable": "Test table"},
+        ])
+
+    def test_failed_kpi_prefers_newer_published_facts_over_workbook_baseline(self) -> None:
+        self.service._refresh_states["KPI_05"] = {
+            "status": "red",
+            "label": "Live extraction failed",
+        }
+        previous = self.service._data["facts"][0].copy()
+        previous.update({"PeriodStart": "2099-01-01", "PeriodEnd": "2099-01-31", "Value": 42.0})
+
+        self.service.retain_last_known_facts([previous])
+
+        kpi = self.service.snapshot()["kpis"][0]
+        self.assertEqual(kpi["refreshStatus"], "red")
+        self.assertEqual(kpi["observationCount"], 1)
+        self.assertEqual(kpi["latestValues"][0]["value"], 42.0)
+
+    def test_failed_kpi_keeps_newer_workbook_facts(self) -> None:
+        self.service._refresh_states["KPI_05"] = {
+            "status": "red",
+            "label": "Live extraction failed",
+        }
+        previous = self.service._data["facts"][0].copy()
+        previous.update({"PeriodStart": "1900-01-01", "PeriodEnd": "1900-01-31", "Value": 42.0})
+
+        self.service.retain_last_known_facts([previous])
+
+        kpi = self.service.snapshot()["kpis"][0]
+        self.assertEqual(kpi["observationCount"], 1)
+        self.assertEqual(kpi["latestValues"][0]["value"], 12.5)
 
     def test_facts_can_be_filtered(self) -> None:
         self.assertEqual(len(self.service.facts_for("KPI_05")), 1)

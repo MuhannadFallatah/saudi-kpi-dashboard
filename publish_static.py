@@ -207,6 +207,47 @@ def load_pre_refresh_snapshot(
     return fallback_status, fallback_facts
 
 
+def last_successful_archive_facts(archive_dir: Path, kpi_ids: set[str]) -> list[dict[str, Any]]:
+    index_path = archive_dir / "index.json"
+    if not index_path.exists() or not kpi_ids:
+        return []
+
+    index = json.loads(index_path.read_text(encoding="utf-8"))
+    if not isinstance(index, dict) or not isinstance(index.get("snapshots"), list):
+        raise ValueError(f"Invalid archive index: {index_path}")
+
+    remaining = set(kpi_ids)
+    retained: list[dict[str, Any]] = []
+    for entry in index["snapshots"]:
+        archive_path = archive_dir / entry["url"]
+        with gzip.open(archive_path, "rt", encoding="utf-8") as archived_file:
+            archived = json.load(archived_file)
+        archived_status = {
+            kpi.get("id"): kpi
+            for kpi in archived.get("status", {}).get("kpis", [])
+            if isinstance(kpi, dict)
+        }
+        successful_ids = {
+            kpi_id
+            for kpi_id in remaining
+            if archived_status.get(kpi_id, {}).get("refreshStatus") == "green"
+            and archived_status.get(kpi_id, {}).get("observationCount", 0) > 0
+        }
+        if not successful_ids:
+            continue
+
+        facts = [
+            fact for fact in archived.get("facts", [])
+            if fact.get("KPI_ID") in successful_ids
+        ]
+        found_ids = {fact["KPI_ID"] for fact in facts}
+        retained.extend(facts)
+        remaining.difference_update(found_ids)
+        if not remaining:
+            break
+    return retained
+
+
 def main() -> None:
     DATA.mkdir(parents=True, exist_ok=True)
     service = MartService(WORKBOOK_PATH, REFRESH_MINUTES)
@@ -228,6 +269,17 @@ def main() -> None:
     if not result["ok"]:
         raise RuntimeError(result["message"])
 
+    post_refresh = service.snapshot()
+    published_kpi_ids = {fact.get("KPI_ID") for fact in pre_refresh_facts}
+    missing_kpis = {
+        kpi["id"]
+        for kpi in post_refresh["kpis"]
+        if kpi["refreshStatus"] == "red"
+        and kpi["refreshLabel"] != "Excluded by request"
+        and kpi["id"] not in published_kpi_ids
+    }
+    archived_facts = last_successful_archive_facts(DOCS / "archive", missing_kpis)
+    service.retain_last_known_facts([*pre_refresh_facts, *archived_facts])
     snapshot = service.snapshot()
     status = {
         **snapshot,

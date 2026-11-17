@@ -1732,6 +1732,32 @@ class MartService:
             facts = [row for row in facts if row["KPI_ID"] == kpi_id]
         return facts
 
+    def retain_last_known_facts(self, previously_published_facts: list[dict[str, Any]]) -> None:
+        with self._lock:
+            catalog_kpi_ids = {item["KPI_ID"] for item in self._data["catalog"]}
+            fallback_kpi_ids = {
+                kpi_id
+                for kpi_id in catalog_kpi_ids
+                if self._refresh_states.get(kpi_id, {}).get("status") == "red"
+                and self._refresh_states.get(kpi_id, {}).get("label") != "Excluded by request"
+            }
+            previous_by_kpi: dict[str, list[dict[str, Any]]] = {}
+            for fact in previously_published_facts:
+                kpi_id = fact.get("KPI_ID")
+                if kpi_id in fallback_kpi_ids:
+                    previous_by_kpi.setdefault(kpi_id, []).append(fact)
+
+            def latest_period(facts: list[dict[str, Any]]) -> str:
+                return max((fact.get("PeriodEnd") or fact.get("PeriodStart") or ""
+                            for fact in facts), default="")
+
+            for kpi_id, previous in previous_by_kpi.items():
+                current = [fact for fact in self._data["facts"] if fact["KPI_ID"] == kpi_id]
+                if not current or latest_period(previous) >= latest_period(current):
+                    self._data["facts"] = [
+                        fact for fact in self._data["facts"] if fact["KPI_ID"] != kpi_id
+                    ] + previous
+
     def workbook_path_for_export(self) -> Path:
         return self.workbook_path
 
