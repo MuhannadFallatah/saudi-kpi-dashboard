@@ -104,6 +104,9 @@ refresh. The exporter produces:
 - `docs/data/Saudi_KPI_Extract.xlsx`
 - `docs/archive/index.json` and one `docs/archive/YYYY-MM-DD.json.gz` full snapshot per day
 
+Fact rows in `facts.json`, the per-KPI JSON files, and the Excel KPI and detail
+sheets include `KPI_Name` alongside `KPI_ID`.
+
 ## Rebuild locally
 
 ```powershell

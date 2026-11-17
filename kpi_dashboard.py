@@ -175,6 +175,7 @@ FACT_HEADERS = (
     "TurnoverSAR",
     "TradeCount",
 )
+FACT_EXPORT_HEADERS = (*FACT_HEADERS[:2], "KPI_Name", *FACT_HEADERS[2:])
 BEC_CODES = {"112", "212", "312", "412", "512", "612", "712", "812"}
 KPI_NAMES_EN = {
     "KPI_01": "Purchasing Managers' Index (PMI)",
@@ -1925,12 +1926,26 @@ class MartService:
             "factCount": len(facts),
         }
 
+    def _with_kpi_names(self, facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        with self._lock:
+            names = {
+                item["KPI_ID"]: KPI_NAMES_EN.get(item["KPI_ID"], item.get("KPI_Name_Original"))
+                for item in self._data["catalog"]
+            }
+        return [
+            {
+                **fact,
+                "KPI_Name": KPI_NAMES_EN.get(fact["KPI_ID"], names.get(fact["KPI_ID"])),
+            }
+            for fact in facts
+        ]
+
     def facts_for(self, kpi_id: str | None = None) -> list[dict[str, Any]]:
         with self._lock:
             facts = list(self._data["facts"])
         if kpi_id:
             facts = [row for row in facts if row["KPI_ID"] == kpi_id]
-        return facts
+        return self._with_kpi_names(facts)
 
     def retain_last_known_facts(self, previously_published_facts: list[dict[str, Any]]) -> None:
         with self._lock:
@@ -1984,6 +1999,8 @@ class MartService:
         with self._lock:
             components = list(self._data.get("components", []))
             export_components = list(self._data.get("kpi08_components", []))
+        components = self._with_kpi_names(components)
+        export_components = self._with_kpi_names(export_components)
         workbook = Workbook()
         workbook.remove(workbook.active)
         used_names: set[str] = set()
@@ -2014,7 +2031,7 @@ class MartService:
             add_table(
                 f"KPI_{number}_{KPI_SHEET_SLUGS[kpi_id]}",
                 [r for r in facts if r["KPI_ID"] == kpi_id],
-                list(FACT_HEADERS),
+                list(FACT_EXPORT_HEADERS),
             )
         if components:
             add_table("KPI_07_BEC_Detail", components, list(components[0]))

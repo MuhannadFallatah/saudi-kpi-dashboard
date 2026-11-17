@@ -1064,6 +1064,23 @@ class MartServiceTests(unittest.TestCase):
         sheet = workbook["KPI_05_Total_Goods_Imports"]
         self.assertEqual(list(sheet.tables), ["tbl_KPI_05_Total_Goods_Imports"])
         self.assertEqual(sheet.max_row, 2)
+        headers = [cell.value for cell in sheet[1]]
+        self.assertIn("KPI_Name", headers)
+        self.assertEqual(sheet.cell(2, headers.index("KPI_Name") + 1).value, "Total goods imports")
+
+    def test_excel_export_adds_kpi_names_to_component_sheets(self) -> None:
+        self.service._data["components"] = [{"KPI_ID": "KPI_07", "Value": 1.0}]
+        self.service._data["kpi08_components"] = [{"KPI_ID": "KPI_08", "Value": 2.0}]
+        workbook = load_workbook(BytesIO(self.service.export_bytes()), data_only=True)
+
+        for sheet_name, expected_name in (
+            ("KPI_07_BEC_Detail", "Capital imports"),
+            ("KPI_08_Components", "Non-oil exports including re-exports"),
+        ):
+            sheet = workbook[sheet_name]
+            headers = [cell.value for cell in sheet[1]]
+            self.assertIn("KPI_Name", headers)
+            self.assertEqual(sheet.cell(2, headers.index("KPI_Name") + 1).value, expected_name)
 
 
 class DashboardApiTests(unittest.TestCase):
@@ -1096,6 +1113,7 @@ class DashboardApiTests(unittest.TestCase):
             body = json.loads(response.read())
         self.assertEqual(body["count"], 1)
         self.assertEqual(body["data"][0]["Value"], 12.5)
+        self.assertEqual(body["data"][0]["KPI_Name"], "Total goods imports")
 
     def test_unknown_kpi_returns_404(self) -> None:
         with self.assertRaises(HTTPError) as error:
