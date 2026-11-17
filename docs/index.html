@@ -45,7 +45,7 @@ a{color:#00714d}.foot{font-size:12px;margin:14px 2px;line-height:1.5}#message{ma
 <div class="tablebox"><table><thead><tr>
 <th>Refresh status</th><th>KPI</th><th>Source</th><th>Frequency</th><th>Records</th><th>Latest data</th><th>Latest value (unit)</th><th>Last extracted (Riyadh)</th><th>Refresh details</th>
 </tr></thead><tbody id="rows"></tbody></table></div>
-<p class="foot">Green indicates a successful extraction from a configured source workbook. Red indicates a failed or unavailable connector, no loaded observations, or intentional exclusion. The report URLs for GASTAT are fixed; MOF report links are discovered automatically; verify the latest observation date. This GitHub Pages site is static: JSON is served as files, not through a live Python API. Source extraction runs automatically in GitHub Actions every hour; this page reloads the latest published data every 5 minutes and when you click "Reload latest data". The repository and the site are public.</p>
+<p class="foot">Green indicates a successful extraction from a configured source workbook. Red indicates a failed or unavailable connector, no loaded observations, or intentional exclusion. If a red row shows a value, it is the last available published observation, not a confirmation of a successful current extraction. The report URLs for GASTAT are fixed; MOF report links are discovered automatically; verify the latest observation date. This GitHub Pages site is static: JSON is served as files, not through a live Python API. Source extraction runs automatically in GitHub Actions every hour; this page reloads the latest published data every 5 minutes and when you click "Reload latest data". The repository and the site are public.</p>
 </main>
 <script>
 function ksa(v){
