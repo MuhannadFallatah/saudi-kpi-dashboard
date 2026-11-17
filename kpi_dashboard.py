@@ -8,11 +8,12 @@ import time
 import calendar
 import re
 import ssl
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from copy import copy
 from html import unescape
 from io import BytesIO
 from datetime import date, datetime, timedelta, timezone
-from urllib.parse import urlencode, urljoin
+from urllib.parse import quote, urlencode, urljoin
 
 from pypdf import PdfReader
 from pypdf.errors import PdfReadError
@@ -962,20 +963,39 @@ def extract_datasaudi_capex(content: bytes) -> list[dict[str, Any]]:
     return [rows[period] for period in sorted(rows)]
 
 
-def sama_pos_report_urls(fetch) -> list[str]:
-    html = fetch(SAMA_POS_PAGE).decode("utf-8", "replace")
-    html = html.replace(r"\u002f", "/")
-    paths = re.findall(r'"FileRef"\s*:\s*"([^"]+\.pdf)"', html, flags=re.IGNORECASE)
-    paths = [path for path in paths if "/statistics/indices/pos_en/" in path.lower()]
-    urls = list(dict.fromkeys(urljoin(SAMA_POS_PAGE, path) for path in paths))
-    if not urls:
-        title = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.IGNORECASE | re.DOTALL)
-        page_title = re.sub(r"\s+", " ", title.group(1)).strip() if title else "unavailable"
-        raise ValueError(
-            f"SAMA POS page did not contain weekly report PDF links "
-            f"(title={page_title!r}, response length={len(html)})."
-        )
-    return urls[:10]
+def sama_pos_report_urls(fetch, full_history: bool = False) -> list[str]:
+    page_url = SAMA_POS_PAGE
+    visited: set[str] = set()
+    urls: list[str] = []
+    while page_url:
+        if page_url in visited:
+            raise ValueError("SAMA POS report list returned a repeated pagination link.")
+        visited.add(page_url)
+        html = fetch(page_url).decode("utf-8", "replace")
+        html = html.replace(r"\u002f", "/")
+        paths = re.findall(r'"FileRef"\s*:\s*"([^"]+\.pdf)"', html, flags=re.IGNORECASE)
+        paths = [path for path in paths if "/statistics/indices/pos_en/" in path.lower()]
+        page_urls = list(dict.fromkeys(
+            urljoin(SAMA_POS_PAGE, quote(path, safe="/%")) for path in paths
+        ))
+        if not page_urls:
+            if not urls:
+                title = re.search(r"<title[^>]*>(.*?)</title>", html, flags=re.IGNORECASE | re.DOTALL)
+                page_title = re.sub(r"\s+", " ", title.group(1)).strip() if title else "unavailable"
+                raise ValueError(
+                    f"SAMA POS page did not contain weekly report PDF links "
+                    f"(title={page_title!r}, response length={len(html)})."
+                )
+            raise ValueError("A SAMA POS report-list page contained no weekly report PDF links.")
+        urls.extend(url for url in page_urls if url not in urls)
+        if not full_history:
+            break
+        next_page = re.search(r'"NextHref"\s*:\s*"([^"]+)"', html, flags=re.IGNORECASE)
+        if not next_page:
+            break
+        next_href = json.loads(f'"{next_page.group(1)}"')
+        page_url = urljoin(SAMA_POS_PAGE, next_href)
+    return urls if full_history else urls[:10]
 
 
 def extract_sama_pos_pdf(content: bytes, source_url: str) -> list[dict[str, Any]]:
@@ -991,25 +1011,136 @@ def extract_sama_pos_pdf(content: bytes, source_url: str) -> list[dict[str, Any]
 
 
 def extract_sama_pos_text(text: str, source_url: str) -> list[dict[str, Any]]:
-    periods = re.findall(
-        r"(\d{1,2}\s+[A-Za-z]{3},\s*\d{2})\s*-\s*(\d{1,2}\s+[A-Za-z]{3},\s*\d{2})",
+    text = text.replace("\xa0", " ")
+    text = re.sub(r"[\u2010-\u2015\u2212]", "-", text)
+    date_token = r"\d{1,2}(?:\s+[A-Za-z]{3})?(?:,\s*\d{2}|\s+\d{4})?"
+    period_pattern = (
+        rf"({date_token})\s*-\s*({date_token})"
+    )
+    report_date_match = re.search(
+        r"(\d{1,2})(?:st|nd|rd|th)?[\s_-]*([A-Za-z]{3,9})[,\s_-]*(20\d{2})",
+        unquote(source_url),
+        flags=re.IGNORECASE,
+    )
+    years_to_date = re.findall(r"\bYear to Date\s+(\d{4})\b", text, flags=re.IGNORECASE)
+    reference_year = int(years_to_date[-1]) if years_to_date else None
+    report_date = None
+    if report_date_match:
+        month_format = "%b" if len(report_date_match.group(2)) == 3 else "%B"
+        report_date = datetime.strptime(
+            f"{report_date_match.group(1)} {report_date_match.group(2)} "
+            f"{report_date_match.group(3)}",
+            f"%d {month_format} %Y",
+        ).date()
+    else:
+        report_note = re.search(
+            r"\bNote:\s*Until\s+([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?"
+            r"(?:,\s*(20\d{2}))?",
+            text,
+            flags=re.IGNORECASE,
+        )
+        note_year = int(report_note.group(3)) if report_note and report_note.group(3) else reference_year
+        if report_note and note_year:
+            month_format = "%b" if len(report_note.group(1)) == 3 else "%B"
+            report_date = datetime.strptime(
+                f"{report_note.group(2)} {report_note.group(1)} {note_year}",
+                f"%d {month_format} %Y",
+            ).date()
+    reference_year = report_date.year if report_date else int(years_to_date[-1]) if years_to_date else None
+
+    def period_range(period: tuple[str, str]) -> tuple[date, date]:
+        def components(value: str) -> tuple[int, int | None, int | None]:
+            match = re.fullmatch(
+                r"(\d{1,2})(?:\s+([A-Za-z]{3}))?(?:(?:,\s*(\d{2}))|(?:\s+(\d{4})))?",
+                value,
+            )
+            if not match:
+                raise ValueError("SAMA POS report contains an invalid weekly date.")
+            day = int(match.group(1))
+            month = datetime.strptime(match.group(2), "%b").month if match.group(2) else None
+            year_text = match.group(3) or match.group(4)
+            year = (
+                datetime.strptime(year_text, "%y").year
+                if year_text and len(year_text) == 2
+                else int(year_text) if year_text else None
+            )
+            return day, month, year
+
+        start_day, start_month, start_year = components(period[0])
+        end_day, end_month, end_year = components(period[1])
+        if start_month is None and end_month is None:
+            if not report_date:
+                raise ValueError("SAMA POS report dates omit months and provide no report date.")
+            if end_day < start_day:
+                end_month = report_date.month
+                start_month = (end_month - 2) % 12 + 1
+            else:
+                start_month = end_month = report_date.month
+        elif start_month is None:
+            start_month = end_month - int(start_day > end_day)
+            if start_month == 0:
+                start_month = 12
+        elif end_month is None:
+            end_month = start_month + int(end_day < start_day)
+            if end_month == 13:
+                end_month = 1
+        if end_year is None:
+            if report_date:
+                end_year = report_date.year - int(
+                    (end_month, end_day) > (report_date.month, report_date.day)
+                )
+            elif reference_year:
+                end_year = reference_year
+            else:
+                raise ValueError("SAMA POS report dates omit a year and provide no year reference.")
+        if start_year is None:
+            start_year = end_year - int((start_month, start_day) > (end_month, end_day))
+        return date(start_year, start_month, start_day), date(end_year, end_month, end_day)
+
+    period_sequences = []
+    period_matches = []
+    for line in text.splitlines():
+        line_periods = [
+            tuple(re.sub(r"\s+", " ", value).strip() for value in period)
+            for period in re.findall(period_pattern, line)
+            if any(re.search(r"[A-Za-z]{3}", value) for value in period)
+        ]
+        period_matches.extend(line_periods)
+        if len(line_periods) >= 2:
+            period_sequences.append(line_periods)
+    descending_sequence = next(
+        (
+            sequence for sequence in reversed(period_sequences)
+            if all(
+                period_range(sequence[index])[0] > period_range(sequence[index + 1])[0]
+                for index in range(len(sequence) - 1)
+            )
+        ),
+        None,
+    )
+    if descending_sequence:
+        periods = sorted(
+            set(period_matches),
+            key=lambda period: period_range(period)[0],
+            reverse=True,
+        )[:4]
+    elif period_sequences and len(period_sequences[-1]) >= 4:
+        periods = period_sequences[-1][-4:]
+    else:
+        periods = list(dict.fromkeys(period_matches))
+    total = re.search(
+        r"(?m)^\s*Total[ \t]*(?:\r?\n[ \t]*)?([^\r\n]+)",
         text,
     )
-    total = re.search(r"(?m)^\s*Total\s+(.+)$", text)
     if len(periods) != 4 or not total:
         raise ValueError("SAMA POS report is missing its four weekly periods or total activity row.")
 
-    values = re.findall(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?", total.group(1))
+    total_row = re.sub(r"(?<=\d),\s+(?=\d)", ",", total.group(1))
+    values = re.findall(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?", total_row)
     if len(values) < 8:
         raise ValueError("SAMA POS total row does not contain four count/value pairs.")
     try:
-        date_ranges = [
-            (
-                datetime.strptime(start.replace(", ", ","), "%d %b,%y").date(),
-                datetime.strptime(end.replace(", ", ","), "%d %b,%y").date(),
-            )
-            for start, end in periods
-        ]
+        date_ranges = [period_range(period) for period in periods]
         pairs = [(float(values[index].replace(",", "")), float(values[index + 1].replace(",", "")))
                  for index in range(0, 8, 2)]
     except ValueError as error:
@@ -1338,12 +1469,19 @@ class MartService:
         self._last_error: str | None = None
         self._next_refresh: str | None = None
         self._refresh_states: dict[str, dict[str, Any]] = {}
+        self._kpi02_history_complete = False
         self.refresh()
 
-    def refresh(self, live: bool = False) -> dict[str, Any]:
+    def refresh(
+        self,
+        live: bool = False,
+        kpi02_history_complete: bool | None = None,
+    ) -> dict[str, Any]:
         with self._lock:
             if self._refreshing:
                 return {"ok": False, "message": "A refresh is already running."}
+            if kpi02_history_complete is not None:
+                self._kpi02_history_complete = kpi02_history_complete
             self._refreshing = True
         started = time.monotonic()
         try:
@@ -1377,7 +1515,10 @@ class MartService:
                     datetime.now(RIYADH_TZ) + timedelta(minutes=self.refresh_minutes)
                 ).isoformat(timespec="seconds")
             if live:
-                self._extract_live_sources(timestamp)
+                self._extract_live_sources(
+                    timestamp,
+                    full_kpi02_history=not self._kpi02_history_complete,
+                )
             return {
                 "ok": True,
                 "lastRefresh": timestamp,
@@ -1399,7 +1540,7 @@ class MartService:
             with self._lock:
                 self._refreshing = False
 
-    def _extract_live_sources(self, timestamp: str) -> None:
+    def _extract_live_sources(self, timestamp: str, full_kpi02_history: bool = False) -> None:
         with self._lock:
             sources = dict(self._data["sources"])
             existing_facts = list(self._data["facts"])
@@ -1471,17 +1612,55 @@ class MartService:
             errors["KPI_14"] = str(error)
 
         try:
+            report_urls = sama_pos_report_urls(fetch, full_history=full_kpi02_history)
             pos_facts: dict[tuple[str, str], dict[str, Any]] = {}
-            for report_url in sama_pos_report_urls(fetch):
-                for fact in extract_sama_pos_pdf(fetch(report_url), report_url):
-                    pos_facts.setdefault((fact["PeriodStart"], fact["SourceTable"]), fact)
+            report_errors: list[tuple[str, str]] = []
+
+            def extract_report(report_url: str) -> tuple[str, list[dict[str, Any]]]:
+                for attempt in range(2):
+                    try:
+                        return report_url, extract_sama_pos_pdf(fetch(report_url), report_url)
+                    except OSError:
+                        if attempt == 1:
+                            raise
+                        time.sleep(1)
+                raise RuntimeError(f"Unable to extract SAMA POS report: {report_url}")
+
+            with ThreadPoolExecutor(max_workers=4) as executor:
+                report_futures = {
+                    executor.submit(extract_report, report_url): report_url
+                    for report_url in report_urls
+                }
+                for future in as_completed(report_futures):
+                    report_url = report_futures[future]
+                    try:
+                        _, report_facts = future.result()
+                    except (OSError, ValueError, KeyError, IndexError) as error:
+                        report_errors.append((report_url, str(error)))
+                        continue
+                    for fact in report_facts:
+                        pos_facts.setdefault((fact["PeriodStart"], fact["SourceTable"]), fact)
+            if report_errors:
+                failures = "; ".join(
+                    f"{url.rsplit('/', 1)[-1]}: {error}"
+                    for url, error in report_errors[:5]
+                )
+                raise ValueError(
+                    f"Could not extract {len(report_errors)} of {len(report_urls)} SAMA POS reports. "
+                    f"Examples: {failures}"
+                )
             extracted["KPI_02"] = sorted(
                 pos_facts.values(),
                 key=lambda fact: (fact["PeriodStart"], fact["SourceTable"]),
             )
             notes["KPI_02"] = (
-                "Extracted the weekly total transaction count and value from SAMA POS reports; "
-                "both measures are retained as separate observations. "
+                "Loaded all available historical weekly POS reports from SAMA's paginated archive; "
+                "weekly transaction counts and values are retained as separate observations. "
+                "Subsequent refreshes update recent reports and preserve the accumulated history. "
+                "Source page: https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/POS.aspx"
+                if full_kpi02_history else
+                "Updated the latest SAMA weekly POS reports while preserving the full previously loaded history; "
+                "weekly transaction counts and values are separate observations. "
                 "Source page: https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/POS.aspx"
             )
         except (OSError, ValueError, KeyError, IndexError) as error:
@@ -1553,6 +1732,20 @@ class MartService:
             kpi_id: rows for kpi_id, rows in extracted.items()
             if kpi_id in replace_ids and rows and kpi_id not in errors
         }
+        if "KPI_02" in successful:
+            pos_facts_by_period = {
+                (fact.get("PeriodStart"), fact.get("SourceTable")): fact
+                for fact in existing_facts
+                if fact.get("KPI_ID") == "KPI_02"
+            }
+            pos_facts_by_period.update({
+                (fact.get("PeriodStart"), fact.get("SourceTable")): fact
+                for fact in successful["KPI_02"]
+            })
+            successful["KPI_02"] = sorted(
+                pos_facts_by_period.values(),
+                key=lambda fact: (fact["PeriodStart"], fact["SourceTable"]),
+            )
         replacement_facts = [row for rows in successful.values() for row in rows]
         with self._lock:
             self._data["facts"] = [
@@ -1605,11 +1798,16 @@ class MartService:
                         "checkedAt": timestamp,
                     }
                 elif kpi_id in successful:
+                    if kpi_id == "KPI_02" and full_kpi02_history:
+                        self._kpi02_history_complete = True
                     self._refresh_states[kpi_id] = {
                         "status": "green",
                         "label": "Live extraction succeeded",
                         "note": notes.get(kpi_id, "Extracted from the configured official source workbook."),
                         "checkedAt": timestamp,
+                        "historicalHistoryComplete": (
+                            self._kpi02_history_complete if kpi_id == "KPI_02" else None
+                        ),
                     }
                 elif kpi_id == "KPI_15" and any(
                     fact.get("KPI_ID") == "KPI_15" for fact in self._data["facts"]
@@ -1692,6 +1890,9 @@ class MartService:
                     ),
                     "refreshNote": state.get("note") or item.get("ExtractionNote") or source.get("ExtractionNote"),
                     "lastChecked": state.get("checkedAt"),
+                    "historicalHistoryComplete": (
+                        self._kpi02_history_complete if kpi_id == "KPI_02" else None
+                    ),
                     "observedFrom": source.get("ObservedFrom"),
                     "observedTo": source.get("ObservedTo"),
                     "sourceAccessStatus": source.get("ExtractionStatus"),
@@ -1738,8 +1939,11 @@ class MartService:
             fallback_kpi_ids = {
                 kpi_id
                 for kpi_id in catalog_kpi_ids
-                if self._refresh_states.get(kpi_id, {}).get("status") == "red"
-                and self._refresh_states.get(kpi_id, {}).get("label") != "Excluded by request"
+                if kpi_id == "KPI_02"
+                or (
+                    self._refresh_states.get(kpi_id, {}).get("status") == "red"
+                    and self._refresh_states.get(kpi_id, {}).get("label") != "Excluded by request"
+                )
             }
             previous_by_kpi: dict[str, list[dict[str, Any]]] = {}
             for fact in previously_published_facts:
@@ -1753,7 +1957,22 @@ class MartService:
 
             for kpi_id, previous in previous_by_kpi.items():
                 current = [fact for fact in self._data["facts"] if fact["KPI_ID"] == kpi_id]
-                if not current or latest_period(previous) >= latest_period(current):
+                if kpi_id == "KPI_02":
+                    merged = {
+                        (fact.get("PeriodStart"), fact.get("SourceTable")): fact
+                        for fact in previous
+                    }
+                    merged.update({
+                        (fact.get("PeriodStart"), fact.get("SourceTable")): fact
+                        for fact in current
+                    })
+                    self._data["facts"] = [
+                        fact for fact in self._data["facts"] if fact["KPI_ID"] != kpi_id
+                    ] + sorted(
+                        merged.values(),
+                        key=lambda fact: (fact["PeriodStart"], fact["SourceTable"]),
+                    )
+                elif not current or latest_period(previous) >= latest_period(current):
                     self._data["facts"] = [
                         fact for fact in self._data["facts"] if fact["KPI_ID"] != kpi_id
                     ] + previous

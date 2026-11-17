@@ -596,6 +596,48 @@ class SamaPosTests(unittest.TestCase):
         self.assertEqual(len(urls), 1)
         self.assertTrue(urls[0].endswith("/POS_EN/Weekly_Points_of_Sale_Transactions_Report.pdf"))
 
+    def test_encodes_spaces_in_report_file_names(self) -> None:
+        html = (
+            r'{"FileRef":"\u002fen-US\u002fStatistics\u002fIndices\u002fPOS_EN\u002f'
+            r'Weekly_Points_of_Sale_Transactions_Report 26th-Oct-2024.pdf"}'
+        )
+        urls = sama_pos_report_urls(lambda _: html.encode("utf-8"))
+
+        self.assertIn("Report%2026th-Oct-2024.pdf", urls[0])
+
+    def test_follows_all_pages_for_historical_report_links(self) -> None:
+        page_one = (
+            r'{"FileRef":"\u002fen-US\u002fStatistics\u002fIndices\u002fPOS_EN\u002fnew.pdf",'
+            r'"NextHref":"?Paged=TRUE&p_ID=1"}'
+        )
+        page_two = (
+            r'{"FileRef":"\u002fen-US\u002fStatistics\u002fIndices\u002fPOS_EN\u002fold.pdf"}'
+        )
+        responses = {
+            "https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/POS.aspx": page_one,
+            "https://www.sama.gov.sa/en-US/Statistics/Indices/Pages/POS.aspx?Paged=TRUE&p_ID=1":
+                page_two,
+        }
+        requested = []
+
+        def fetch(url: str) -> bytes:
+            requested.append(url)
+            return responses[url].encode("utf-8")
+
+        urls = sama_pos_report_urls(fetch, full_history=True)
+
+        self.assertEqual(len(requested), 2)
+        self.assertEqual([url.rsplit("/", 1)[-1] for url in urls], ["new.pdf", "old.pdf"])
+
+    def test_regular_refresh_limits_report_page_to_ten_files(self) -> None:
+        html = "".join(
+            rf'{{"FileRef":"\u002fen-US\u002fStatistics\u002fIndices\u002fPOS_EN\u002f{index}.pdf"}}'
+            for index in range(12)
+        )
+        urls = sama_pos_report_urls(lambda _: html.encode("utf-8"))
+
+        self.assertEqual(len(urls), 10)
+
     def test_extracts_weekly_count_and_value_as_separate_rows(self) -> None:
         text = """
         27 Sep,26 - 03 Oct,26 04 Oct,26 - 10 Oct,26 11 Oct,26 - 17 Oct,26 18 Oct,26 - 24 Oct,26
@@ -613,6 +655,153 @@ class SamaPosTests(unittest.TestCase):
         value = next(row for row in latest if row["Unit"] == "SAR thousand")
         self.assertEqual((count["Value"], count["PeriodEnd"]), (229116.0, "2026-10-24"))
         self.assertEqual(value["Value"], 11779845.0)
+
+    def test_extracts_total_from_older_report_with_repeated_headers_and_wrapped_total(self) -> None:
+        periods = (
+            "22 Jun,25 - 28 Jun,25 29 Jun,25 - 05 Jul,25 "
+            "06 Jul,25 - 12 Jul,25 13 Jul,25 - 19 Jul,25"
+        )
+        text = f"""
+        {periods}
+        Number of Transactions Value of Transactions
+        Clothing & Footwear 6,182 830,956
+        Total
+        219,952 13,615,757 230,488 14,299,229 223,571 13,128,222 212,732 12,193,511 -4.8 -7.1
+        Table 2
+        {periods}
+        """
+
+        rows = extract_sama_pos_text(text, "https://www.sama.gov.sa/report.pdf")
+
+        self.assertEqual(len(rows), 8)
+        latest_count = next(
+            row for row in rows
+            if row["PeriodStart"] == "2025-07-13" and row["Unit"] == "thousand transactions"
+        )
+        self.assertEqual(latest_count["Value"], 212732.0)
+
+    def test_extracts_total_with_nonbreaking_spaces_and_unicode_date_hyphens(self) -> None:
+        text = (
+            "Total\u00a0\u00a0الإجمالي 192,099 11,097,564 227,769 15,164,681 "
+            "214,579 13,435,403 212,147 13,234,850 -1.1 -1.5\n"
+            "20\u00a0Oct,24\u00a0\u00a0\u2010\u00a0\u00a026\u00a0Oct,24 "
+            "Weekly Change 10\u00a0Nov,24\u00a0\u2010\u00a016\u00a0Nov,24\n"
+            "20\u00a0Oct,24\u00a0\u2010\u00a026\u00a0Oct,24 "
+            "27\u00a0Oct,24\u00a0\u2010\u00a002\u00a0Nov,24 "
+            "03\u00a0Nov,24\u00a0\u2010\u00a009\u00a0Nov,24\n"
+            "10\u00a0Nov,24\u00a0\u2010\u00a016\u00a0Nov,24"
+            "03\u00a0Nov,24\u00a0\u2010\u00a009\u00a0Nov,24"
+            "27\u00a0Oct,24\u00a0\u2010\u00a002\u00a0Nov,24"
+            "20\u00a0Oct,24\u00a0\u2010\u00a026\u00a0Oct,24"
+        )
+
+        rows = extract_sama_pos_text(text, "https://www.sama.gov.sa/report.pdf")
+
+        latest_count = next(
+            row for row in rows
+            if row["PeriodStart"] == "2024-11-10" and row["Unit"] == "thousand transactions"
+        )
+        self.assertEqual((latest_count["Value"], latest_count["PeriodEnd"]), (192099.0, "2024-11-16"))
+
+    def test_extracts_yearless_legacy_dates_from_report_filename(self) -> None:
+        text = (
+            "Total 70,091 7,229,498 76,623 8,647,581 80,816 9,004,770 76,453 7,976,889\n"
+            "15 Nov - 21 Nov Weekly Change 06 Dec - 12 Dec\n"
+            "15 Nov - 21 Nov 22 Nov - 28 Nov 29 Nov - 05 Dec\n"
+            "06 Dec - 12 Dec 29 Nov - 05 Dec 22 Nov - 28 Nov"
+        )
+        source_url = (
+            "https://www.sama.gov.sa/en-US/Statistics/Indices/POS_EN/"
+            "Weekly_Point_of_Sales_Transactions_Report_12Dec2020.pdf"
+        )
+
+        rows = extract_sama_pos_text(text, source_url)
+
+        latest_count = next(
+            row for row in rows
+            if row["PeriodStart"] == "2020-12-06" and row["Unit"] == "thousand transactions"
+        )
+        self.assertEqual((latest_count["Value"], latest_count["PeriodEnd"]), (70091.0, "2020-12-12"))
+
+    def test_assigns_yearless_cross_year_weeks_around_report_date(self) -> None:
+        text = (
+            "Total 100 200 300 400 500 600 700 800\n"
+            "03 Jan - 09 Jan\n"
+            "03 Jan - 09 Jan 27 Dec - 02 Jan 20 Dec - 26 Dec 13 Dec - 19 Dec"
+        )
+        source_url = "https://www.sama.gov.sa/Weekly_Point_of_Sales_Report_09Jan2021.pdf"
+
+        rows = extract_sama_pos_text(text, source_url)
+
+        starts = sorted({row["PeriodStart"] for row in rows})
+        self.assertEqual(starts, ["2020-12-13", "2020-12-20", "2020-12-27", "2021-01-03"])
+
+    def test_extracts_abbreviated_2020_dates_and_spaced_thousands(self) -> None:
+        text = (
+            "Total 67,353 7,331,647 64,385 6,878,859 67,003 7,677, 157 "
+            "75,427 9,029,472 12. 6 17.6\n"
+            "06 - 12 Sep 13 - 19 Sep 20 - 26 Sep\n"
+            "27 Sep - 03 Oct20 - 26 Sep13 - 19 Sep06 - 12 Sep"
+        )
+        source_url = (
+            "https://www.sama.gov.sa/en-US/Statistics/Indices/POS_EN/"
+            "Weekly%20Point%20of%20Sales%20Transactions%20Report%2003%20Oct2020.pdf"
+        )
+
+        rows = extract_sama_pos_text(text, source_url)
+
+        latest_count = next(
+            row for row in rows
+            if row["PeriodStart"] == "2020-09-27" and row["Unit"] == "thousand transactions"
+        )
+        self.assertEqual((latest_count["Value"], latest_count["PeriodEnd"]), (67353.0, "2020-10-03"))
+        week_value = next(
+            row for row in rows
+            if row["PeriodStart"] == "2020-09-13" and row["Unit"] == "SAR thousand"
+        )
+        self.assertEqual(week_value["Value"], 7677157.0)
+
+    def test_uses_note_and_year_to_date_for_undated_report(self) -> None:
+        text = (
+            "Total 48,209 7,295,830 46,704 7,261,242 53,786 9,191,345 "
+            "62,811 10,467,067\n"
+            "Year to Date 2019 Year to Date 2020\n"
+            "Note: Until July 4th\n"
+            "28 Jun - 4 Jul\n"
+            "28 Jun - 4 Jul21 - 27 Jun14 - 20 Jun7 - 13 Jun"
+        )
+
+        rows = extract_sama_pos_text(
+            text,
+            "https://www.sama.gov.sa/en-US/Statistics/Indices/POS_EN/"
+            "Z3-Weekly_Point_of_Sales_Transactions.pdf",
+        )
+
+        latest_count = next(
+            row for row in rows
+            if row["PeriodStart"] == "2020-06-28" and row["Unit"] == "thousand transactions"
+        )
+        self.assertEqual((latest_count["Value"], latest_count["PeriodEnd"]), (48209.0, "2020-07-04"))
+
+    def test_uses_explicit_year_from_note_for_undated_report(self) -> None:
+        text = (
+            "Total 41,324 6,491,277 29,082 3,253,178 50,281 7,854,373 48,209 7,295,830\n"
+            "Note: Until June 13, 2020\n"
+            "17 - 23 May 24 - 30 May 31 May - 06 Jun\n"
+            "07 - 13 Jun 31 May - 06 Jun 24 - 30 May 17 - 23 May"
+        )
+
+        rows = extract_sama_pos_text(
+            text,
+            "https://www.sama.gov.sa/en-US/Statistics/Indices/POS_EN/"
+            "Weekly_Point_of_Sales_Transactions-2.pdf",
+        )
+
+        latest_count = next(
+            row for row in rows
+            if row["PeriodStart"] == "2020-06-07" and row["Unit"] == "thousand transactions"
+        )
+        self.assertEqual((latest_count["Value"], latest_count["PeriodEnd"]), (41324.0, "2020-06-13"))
 
     def test_rejects_report_without_total_or_periods(self) -> None:
         with self.assertRaisesRegex(ValueError, "four weekly periods or total"):
@@ -791,6 +980,39 @@ class MartServiceTests(unittest.TestCase):
         self.assertEqual(kpi["refreshStatus"], "red")
         self.assertEqual(kpi["observationCount"], 1)
         self.assertEqual(kpi["latestValues"][0]["value"], 42.0)
+
+    def test_successful_kpi02_refresh_preserves_old_weeks_and_updates_overlap(self) -> None:
+        catalog_item = self.service._data["catalog"][0].copy()
+        catalog_item.update({"KPI_ID": "KPI_02", "KPI_Name_Original": "POS"})
+        self.service._data["catalog"].append(catalog_item)
+        self.service._refresh_states["KPI_02"] = {
+            "status": "green",
+            "label": "Live extraction succeeded",
+        }
+        old_fact = self.service._data["facts"][0].copy()
+        old_fact.update({
+            "KPI_ID": "KPI_02",
+            "PeriodStart": "2020-08-02",
+            "PeriodEnd": "2020-08-08",
+            "Value": 10.0,
+            "Unit": "thousand transactions",
+        })
+        overlap_fact = old_fact.copy()
+        overlap_fact.update({
+            "PeriodStart": "2026-11-01",
+            "PeriodEnd": "2026-11-07",
+            "Value": 99.0,
+        })
+        previous_overlap = overlap_fact.copy()
+        previous_overlap["Value"] = 90.0
+        self.service._data["facts"].append(overlap_fact)
+
+        self.service.retain_last_known_facts([old_fact, previous_overlap])
+
+        pos_facts = self.service.facts_for("KPI_02")
+        self.assertEqual(len(pos_facts), 2)
+        latest = next(fact for fact in pos_facts if fact["PeriodEnd"] == "2026-11-07")
+        self.assertEqual(latest["Value"], 99.0)
 
     def test_failed_kpi_keeps_newer_workbook_facts(self) -> None:
         self.service._refresh_states["KPI_05"] = {

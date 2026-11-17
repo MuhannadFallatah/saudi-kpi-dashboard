@@ -265,7 +265,16 @@ def main() -> None:
         generated_at,
     )
 
-    result = service.refresh(live=True)
+    previous_kpi02_status = next(
+        (kpi for kpi in pre_refresh_status.get("kpis", []) if kpi.get("id") == "KPI_02"),
+        {},
+    )
+    result = service.refresh(
+        live=True,
+        kpi02_history_complete=bool(
+            previous_kpi02_status.get("historicalHistoryComplete", False)
+        ),
+    )
     if not result["ok"]:
         raise RuntimeError(result["message"])
 
