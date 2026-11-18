@@ -1,7 +1,7 @@
 # Saudi KPI Data Monitor — GitHub Pages
 
 This repository template provides a static dashboard for 16 Saudi KPI groups,
-including the separate annual MOF series KPI 16.1,
+including the separate quarterly MOF series KPI 16.1,
 plus a scheduled GitHub Actions job that extracts available official GASTAT
 workbooks and rebuilds the Excel and JSON downloads.
 
@@ -57,8 +57,9 @@ on recurring runs; existing workbook history is retained while successful
 live observations may be added. The page exposes only about one month and may
 block runners), and KPI 15 (4,958 daily TASI closing values initially loaded
 from the Saudi Exchange Historical Reports page, covering 2007-01-06 through
-2026-11-15). The page returns HTTP 403 to unattended requests, so KPI 15 is a
-static historical baseline and is not updated by scheduled refreshes.
+2026-11-15). The same page embeds recent daily final closes in its HTML; refreshes
+merge those rows by trading date with the full historical baseline and the
+previously published KPI 15 history, preserving earlier observations.
 KPIs 05, 07 and 12 use GASTAT monthly trade database reports. KPIs 08 and 11
 use the newest monthly ITR workbook linked on GASTAT's [monthly goods-trade
 statistics page](https://www.stats.gov.sa/ar/statistics-tabs?tab=436312&category=123481).
@@ -71,12 +72,13 @@ KPI 16 uses DataSaudi's
 [Public Finances](https://datasaudi.sa/ar/#public-finances) quarterly
 "Capital Expenditures" series, sourced to the Ministry of Finance. The
 DataSaudi API reports SAR billions; values are converted to SAR million.
-KPI 16.1 is a separate annual series extracted from the MOF
-[Public Finance Data](https://www.mof.gov.sa/ar/public-finance-data) workbook
-"Actual Public Finance Data." Its explicit capital-expenditure column is in
-SAR million and currently covers 1993–2020. It is exported separately from
-KPI 16 as `KPI_16_1.json` and in its own `KPI_16_1_MOF_Capex` worksheet/table;
-the workbook does not provide later actual years.
+KPI 16.1 is a separate quarterly actual series extracted from the MOF
+[Budget Performance Reports](https://www.mof.gov.sa/ar/budget-performance-reports).
+The reports identify capital spending as "Non-financial Assets (CAPEX)" and
+provide quarterly values in SAR million. Available quarterly reports begin in
+Q1 2022; each annual report supplies that year's quarterly observations, up to
+the latest quarter published. It is exported separately from KPI 16 as
+`KPI_16_1.json` and in its own `KPI_16_1_MOF_Capex` worksheet/table.
 KPI 6 uses the newest SAMA
 [Monthly Statistical Bulletin](https://www.sama.gov.sa/ar-sa/statistics/pages/monthlystatistics.aspx)
 workbook discovered at each refresh: the monthly Grand Total of Table 20

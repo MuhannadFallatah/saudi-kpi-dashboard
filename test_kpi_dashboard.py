@@ -23,15 +23,18 @@ from kpi_dashboard import (
     MartService,
     DATASAUDI_CAPEX_PAGE,
     DATASAUDI_CAPEX_URL,
-    MOF_CAPEX_URL,
-    MOF_PUBLIC_FINANCE_PAGE,
+    MOF_BUDGET_PERFORMANCE_PAGE,
+    MOF_CAPEX_REPORT_PAGES,
+    PUBLISHED_KPI_URL,
+    SAUDI_EXCHANGE_TASI_URL,
     WORKBOOK_PATH,
     GASTAT_KPI08_SOURCE_PAGE,
     GASTAT_KPI13_SOURCE_PAGE,
     ITR_WORKBOOK_URL,
     apply_configured_source_metadata,
     extract_datasaudi_capex,
-    extract_mof_annual_capex,
+    extract_mof_quarterly_capex,
+    mof_quarterly_capex_report_urls,
     extract_datasaudi_pmi,
     extract_gfcf_imports,
     extract_imports_cpc,
@@ -43,6 +46,8 @@ from kpi_dashboard import (
     extract_datasaudi_saibor,
     extract_investing_cds,
     merge_cds_history,
+    extract_saudi_exchange_tasi,
+    merge_tasi_history,
     extract_datasaudi_tasi,
     workbook_data,
     extract_sama_pos_text,
@@ -56,6 +61,17 @@ from kpi_dashboard import (
 
 
 class TasiInitialBaselineTests(unittest.TestCase):
+    def test_metadata_registers_the_live_daily_exchange_source(self) -> None:
+        catalog = [{"KPI_ID": "KPI_15"}]
+        sources = {}
+
+        apply_configured_source_metadata(catalog, sources)
+
+        self.assertEqual(catalog[0]["Source"], "Saudi Exchange")
+        self.assertEqual(catalog[0]["Frequency_or_TimeFrame"], "Daily")
+        self.assertEqual(catalog[0]["ExtractionStatus"], "Live daily report extraction configured")
+        self.assertEqual(sources["KPI_15"]["PrimarySourceURL"], SAUDI_EXCHANGE_TASI_URL)
+
     def test_daily_initial_load_covers_full_source_history(self) -> None:
         rows = [
             fact for fact in workbook_data(WORKBOOK_PATH)["facts"]
@@ -73,6 +89,7 @@ class TasiInitialBaselineTests(unittest.TestCase):
         service = MartService(WORKBOOK_PATH, 1440)
         with (
             patch("kpi_dashboard.download_bytes", side_effect=OSError("source unavailable")),
+            patch("kpi_dashboard.download_saudi_exchange_tasi_page", side_effect=OSError("source unavailable")),
             patch("kpi_dashboard.post_json", side_effect=OSError("source unavailable")),
         ):
             result = service.refresh(live=True)
@@ -83,8 +100,127 @@ class TasiInitialBaselineTests(unittest.TestCase):
         self.assertEqual(rows[0]["PeriodStart"][:10], "2007-01-06")
         self.assertEqual(rows[-1]["PeriodStart"][:10], "2026-11-15")
         kpi = next(item for item in service.snapshot()["kpis"] if item["id"] == "KPI_15")
-        self.assertEqual(kpi["refreshLabel"], "Historical baseline loaded")
-        self.assertFalse(kpi["liveExtractionConfigured"])
+        self.assertEqual(kpi["refreshLabel"], "Live extraction failed")
+        self.assertEqual(kpi["refreshStatus"], "red")
+        self.assertTrue(kpi["liveExtractionConfigured"])
+
+    def test_extracts_recent_final_closes_from_the_exchange_page(self) -> None:
+        payload = [
+            {
+                "transactionDate": "2026/11/17",
+                "todaysOpen": "10,189.07",
+                "highPrice": "10,267.23",
+                "lowPrice": "10,168.19",
+                "previousClosePrice": "10,253.20",
+                "volumeTraded": "176,165,508",
+                "turnOver": "3,519,910,014.08",
+                "noOfTrades": "350,177",
+            },
+            {
+                "transactionDate": "2026/11/16",
+                "todaysOpen": "10,252.96",
+                "highPrice": "10,293.34",
+                "lowPrice": "10,199.07",
+                "previousClosePrice": "10,264.36",
+                "volumeTraded": "207,854,420",
+                "turnOver": "3,627,278,888.47",
+                "noOfTrades": "406,630",
+            },
+        ]
+        page = (
+            '<option value="M:TASI" selected="selected">Tadawul All Share Index (TASI)</option>'
+            f'<script>helpers.populateDataTable(JSON.stringify({json.dumps(payload)}), "perfSummary");</script>'
+        )
+
+        rows = extract_saudi_exchange_tasi(page.encode("utf-8"))
+
+        self.assertEqual([row["PeriodStart"] for row in rows], ["2026-11-16", "2026-11-17"])
+        self.assertEqual([row["Close"] for row in rows], [10264.36, 10253.2])
+        self.assertEqual([row["Value"] for row in rows], [10264.36, 10253.2])
+        self.assertEqual(rows[-1]["Unit"], "index points")
+        self.assertEqual(rows[-1]["SourceURL"], SAUDI_EXCHANGE_TASI_URL)
+        self.assertEqual(rows[-1]["VolumeTraded"], 176165508)
+        self.assertEqual(rows[-1]["TurnoverSAR"], 3519910014.08)
+        self.assertEqual(rows[-1]["TradeCount"], 350177)
+
+    def test_rejects_exchange_page_without_selected_tasi_or_final_close(self) -> None:
+        with self.assertRaisesRegex(ValueError, "selected entity"):
+            extract_saudi_exchange_tasi(b"<html>No selected entity</html>")
+
+        page = (
+            '<option value="M:TASI" selected="selected">TASI</option>'
+            '<script>populateDataTable(JSON.stringify([{"transactionDate":"2026/11/17",'
+            '"previousClosePrice":"-"}]), "perfSummary");</script>'
+        )
+        with self.assertRaisesRegex(ValueError, "final close"):
+            extract_saudi_exchange_tasi(page.encode("utf-8"))
+
+    def test_merges_recent_closes_over_published_history_without_dropping_baseline(self) -> None:
+        old = {"KPI_ID": "KPI_15", "PeriodStart": "2007-01-06T00:00:00", "PeriodEnd": "2007-01-06T00:00:00", "Value": 7967.7}
+        published = {"KPI_ID": "KPI_15", "PeriodStart": "2026-11-16", "PeriodEnd": "2026-11-16", "Value": 10200.0}
+        recent = {"KPI_ID": "KPI_15", "PeriodStart": "2026-11-16", "PeriodEnd": "2026-11-16", "Value": 10264.36}
+
+        rows = merge_tasi_history([old, published], [recent])
+
+        self.assertEqual([row["PeriodStart"] for row in rows], ["2007-01-06", "2026-11-16"])
+        self.assertEqual(rows[-1]["Value"], 10264.36)
+
+    def test_live_refresh_updates_and_retains_daily_tasi_history(self) -> None:
+        service = MartService(WORKBOOK_PATH, 1440)
+        prior = dict(next(
+            row for row in service.facts_for("KPI_15")
+            if row["PeriodStart"].startswith("2026-11-15")
+        ))
+        prior["PeriodStart"] = prior["PeriodEnd"] = "2026-11-16"
+        prior["MonthName"] = "Nov 16"
+        prior["Value"] = prior["Close"] = 10264.36
+        page_rows = [
+            {
+                "transactionDate": "2026/11/17",
+                "todaysOpen": "10,189.07",
+                "highPrice": "10,267.23",
+                "lowPrice": "10,168.19",
+                "previousClosePrice": "10,253.20",
+                "volumeTraded": "176,165,508",
+                "turnOver": "3,519,910,014.08",
+                "noOfTrades": "350,177",
+            },
+            {
+                "transactionDate": "2026/11/16",
+                "todaysOpen": "10,252.96",
+                "highPrice": "10,293.34",
+                "lowPrice": "10,199.07",
+                "previousClosePrice": "10,264.36",
+                "volumeTraded": "207,854,420",
+                "turnOver": "3,627,278,888.47",
+                "noOfTrades": "406,630",
+            },
+        ]
+        page = (
+            '<option value="M:TASI" selected="selected">TASI</option>'
+            f'<script>populateDataTable(JSON.stringify({json.dumps(page_rows)}), "perfSummary");</script>'
+        ).encode("utf-8")
+
+        def published_or_unavailable(url: str) -> bytes:
+            if url.startswith(PUBLISHED_KPI_URL.format(kpi_id="KPI_15")):
+                return json.dumps({"data": [prior]}).encode("utf-8")
+            raise OSError("provider unavailable")
+
+        with (
+            patch("kpi_dashboard.download_saudi_exchange_tasi_page", return_value=page),
+            patch("kpi_dashboard.download_bytes", side_effect=published_or_unavailable),
+            patch("kpi_dashboard.post_json", side_effect=OSError("provider unavailable")),
+        ):
+            result = service.refresh(live=True)
+
+        rows = service.facts_for("KPI_15")
+        kpi = next(item for item in service.snapshot()["kpis"] if item["id"] == "KPI_15")
+        self.assertTrue(result["ok"])
+        self.assertEqual(kpi["refreshStatus"], "green")
+        self.assertEqual(len(rows), 4960)
+        self.assertEqual(rows[0]["PeriodStart"], "2007-01-06")
+        self.assertEqual(rows[-1]["PeriodStart"], "2026-11-17")
+        self.assertEqual(rows[-1]["Close"], 10253.2)
 
 
 class SamaPrivateImportsTests(unittest.TestCase):
@@ -498,24 +634,27 @@ class MOFCapexTests(unittest.TestCase):
     @staticmethod
     def _workbook(
         rows: list[tuple[object, ...]],
-        headers: tuple[str, ...] = ("Year", "Expenditure", "Capital Expenditures"),
     ) -> bytes:
         workbook = Workbook()
         sheet = workbook.active
-        sheet.title = "public finance"
-        sheet.append(["Actual public finance"])
-        sheet.append(headers)
+        sheet.title = "Expenditures "
+        sheet.append(["Quarterly Budget Performance Report"])
+        sheet.append(["Expenditures*", "Total", "Q2", "Q1", "Expenditures*"])
+        sheet.append(["", "", 2024, 2024, ""])
         for row in rows:
             sheet.append(row)
         content = BytesIO()
         workbook.save(content)
         return content.getvalue()
 
-    def test_extracts_sorted_annual_mof_capital_expenditure(self) -> None:
-        rows = extract_mof_annual_capex(self._workbook([
-            (2020, 1000, 155088),
-            (1993, 500, 3012),
-        ]))
+    def test_extracts_quarterly_mof_capital_expenditure(self) -> None:
+        source_url = "https://www.mof.gov.sa/sample-quarterly-report.xlsx"
+        rows = extract_mof_quarterly_capex(
+            self._workbook([
+                ("الأصول غير المالية (رأسمالي)", 200000, 155088, 44912, "Non-financial Assets (CAPEX)"),
+            ]),
+            source_url,
+        )
         self.assertEqual(
             [
                 (row["KPI_ID"], row["Year"], row["PeriodStart"], row["PeriodEnd"],
@@ -523,38 +662,65 @@ class MOFCapexTests(unittest.TestCase):
                 for row in rows
             ],
             [
-                ("KPI_16_1", 1993, "1993-01-01", "1993-12-31", None, "Annual", 3012.0, "SAR million"),
-                ("KPI_16_1", 2020, "2020-01-01", "2020-12-31", None, "Annual", 155088.0, "SAR million"),
+                ("KPI_16_1", 2024, "2024-01-01", "2024-03-31", None, "Q1", 44912.0, "SAR million"),
+                ("KPI_16_1", 2024, "2024-04-01", "2024-06-30", None, "Q2", 155088.0, "SAR million"),
             ],
         )
-        self.assertTrue(all(row["SourceURL"] == MOF_CAPEX_URL for row in rows))
+        self.assertTrue(all(row["SourceURL"] == source_url for row in rows))
 
     def test_rejects_workbook_without_capital_expenditure_column(self) -> None:
-        with self.assertRaisesRegex(ValueError, "missing its year and capital-expenditure columns"):
-            extract_mof_annual_capex(
-                self._workbook([(2020, 1000)], headers=("Year", "Expenditure"))
+        with self.assertRaisesRegex(ValueError, "missing quarterly capital-expenditure data"):
+            extract_mof_quarterly_capex(
+                self._workbook([
+                    ("Employee compensation", 100000, 50000, 50000, "Compensation of Employees"),
+                ]),
+                "https://www.mof.gov.sa/sample-quarterly-report.xlsx",
             )
 
-    def test_metadata_registers_mof_as_a_separate_annual_kpi(self) -> None:
+    def test_discovers_latest_quarterly_report_for_each_year(self) -> None:
+        page_url = MOF_CAPEX_REPORT_PAGES[2026]
+        content = (
+            b'<a href="/documents/Q1+2026.xlsx/first?t=1&amp;download=true">Q1</a>'
+            b'<a href="/documents/Q3+2026.xlsx/latest?t=2&amp;download=true">Q3</a>'
+        )
+        reports = mof_quarterly_capex_report_urls(lambda url: content, {2026: page_url})
+        self.assertEqual(
+            reports,
+            [(2026, "https://www.mof.gov.sa/documents/Q3+2026.xlsx/latest?download=true")],
+        )
+
+    def test_metadata_registers_mof_as_a_separate_quarterly_kpi(self) -> None:
         catalog = [{"KPI_ID": "KPI_16_1"}]
         sources = {}
         apply_configured_source_metadata(catalog, sources)
         self.assertEqual(catalog[0]["Source"], "Saudi Ministry of Finance (MOF)")
-        self.assertEqual(catalog[0]["SourceURL"], MOF_PUBLIC_FINANCE_PAGE)
-        self.assertEqual(catalog[0]["Frequency_or_TimeFrame"], "Annual")
-        self.assertIn("ends in 2020", catalog[0]["Access_Caveat"])
-        self.assertEqual(sources["KPI_16_1"]["PrimarySourceURL"], MOF_PUBLIC_FINANCE_PAGE)
-        self.assertEqual(sources["KPI_16_1"]["ExtractedDataURL"], MOF_CAPEX_URL)
+        self.assertEqual(catalog[0]["SourceURL"], MOF_BUDGET_PERFORMANCE_PAGE)
+        self.assertEqual(catalog[0]["Frequency_or_TimeFrame"], "Quarterly")
+        self.assertIn("Q1 2022", catalog[0]["Access_Caveat"])
+        self.assertEqual(sources["KPI_16_1"]["PrimarySourceURL"], MOF_BUDGET_PERFORMANCE_PAGE)
+        self.assertEqual(sources["KPI_16_1"]["ExtractedDataURL"], MOF_BUDGET_PERFORMANCE_PAGE)
 
     def test_source_mart_and_excel_keep_kpi_16_series_separate(self) -> None:
         facts = workbook_data(WORKBOOK_PATH)["facts"]
         quarterly = [row for row in facts if row["KPI_ID"] == "KPI_16"]
-        annual = [row for row in facts if row["KPI_ID"] == "KPI_16_1"]
+        mof_quarterly = [row for row in facts if row["KPI_ID"] == "KPI_16_1"]
         self.assertTrue(quarterly)
-        self.assertEqual(len(annual), 28)
-        self.assertEqual((annual[0]["Year"], annual[-1]["Year"]), (1993, 2020))
-        self.assertTrue(all(row["Month"] is None and row["MonthName"] == "Annual" for row in annual))
-        self.assertTrue(all(row["Unit"] == "SAR million" for row in annual))
+        self.assertEqual(len(mof_quarterly), 19)
+        self.assertEqual(
+            (mof_quarterly[0]["Year"], mof_quarterly[0]["MonthName"],
+             mof_quarterly[-1]["Year"], mof_quarterly[-1]["MonthName"]),
+            (2022, "Q1", 2026, "Q3"),
+        )
+        self.assertTrue(all(row["Month"] is None and row["MonthName"].startswith("Q") for row in mof_quarterly))
+        self.assertTrue(all(row["Unit"] == "SAR million" for row in mof_quarterly))
+
+        source_workbook = load_workbook(WORKBOOK_PATH, data_only=True)
+        self.assertEqual(
+            source_workbook["Fact_All"].tables["T_FactAll"].ref,
+            f"A1:T{source_workbook['Fact_All'].max_row}",
+        )
+        self.assertEqual(source_workbook["16_1_KPI"].max_row, 20)
+        source_workbook.close()
 
         service = MartService(WORKBOOK_PATH, refresh_minutes=60)
         workbook = load_workbook(BytesIO(service.export_bytes()), data_only=True)
@@ -571,21 +737,22 @@ class MOFCapexTests(unittest.TestCase):
             sheet.cell(2, headers.index("KPI_Name") + 1).value,
             KPI_NAMES_EN["KPI_16_1"],
         )
-        self.assertEqual(sheet.max_row, 29)
+        self.assertEqual(sheet.max_row, 20)
 
     def test_live_refresh_replaces_only_the_mof_series(self) -> None:
         content = self._workbook([
-            (2019, 1000, 90000),
-            (2020, 1000, 100000),
+            ("الأصول غير المالية (رأسمالي)", 190000, 100000, 90000, "Non-financial Assets (CAPEX)"),
         ])
+        report_url = "https://www.mof.gov.sa/sample-quarterly-report.xlsx"
 
         def download(url: str) -> bytes:
-            if url == MOF_CAPEX_URL:
+            if url == report_url:
                 return content
             raise OSError("not mocked")
 
         service = MartService(WORKBOOK_PATH, refresh_minutes=60)
         with (
+            patch("kpi_dashboard.mof_quarterly_capex_report_urls", return_value=[(2024, report_url)]),
             patch("kpi_dashboard.download_bytes", side_effect=download),
             patch("kpi_dashboard.post_json", side_effect=OSError("not mocked")),
         ):
@@ -593,8 +760,8 @@ class MOFCapexTests(unittest.TestCase):
 
         self.assertEqual(len(service.facts_for("KPI_16")), 39)
         self.assertEqual(
-            [(row["Year"], row["Value"]) for row in service.facts_for("KPI_16_1")],
-            [(2019, 90000.0), (2020, 100000.0)],
+            [(row["Year"], row["MonthName"], row["Value"]) for row in service.facts_for("KPI_16_1")],
+            [(2024, "Q1", 90000.0), (2024, "Q2", 100000.0)],
         )
 
 
