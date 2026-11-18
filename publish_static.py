@@ -53,7 +53,8 @@ def build_refresh_log(snapshot: dict[str, Any], generated_at: str) -> dict[str, 
         "summary": {
             "kpiCount": len(entries),
             "successCount": sum(entry["status"] == "green" for entry in entries),
-            "failedCount": sum(entry["status"] != "green" for entry in entries),
+            "pausedCount": sum(entry["status"] == "paused" for entry in entries),
+            "failedCount": sum(entry["status"] == "red" for entry in entries),
         },
         "entries": entries,
     }
@@ -230,7 +231,7 @@ def last_successful_archive_facts(archive_dir: Path, kpi_ids: set[str]) -> list[
         successful_ids = {
             kpi_id
             for kpi_id in remaining
-            if archived_status.get(kpi_id, {}).get("refreshStatus") == "green"
+            if archived_status.get(kpi_id, {}).get("refreshStatus") in {"green", "paused"}
             and archived_status.get(kpi_id, {}).get("observationCount", 0) > 0
         }
         if not successful_ids:
@@ -283,7 +284,7 @@ def main() -> None:
     missing_kpis = {
         kpi["id"]
         for kpi in post_refresh["kpis"]
-        if kpi["refreshStatus"] == "red"
+        if kpi["refreshStatus"] in {"red", "paused"}
         and kpi["refreshLabel"] != "Excluded by request"
         and kpi["id"] not in published_kpi_ids
     }

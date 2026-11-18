@@ -26,6 +26,7 @@ from kpi_dashboard import (
     MOF_BUDGET_PERFORMANCE_PAGE,
     MOF_CAPEX_REPORT_PAGES,
     PUBLISHED_KPI_URL,
+    INVESTING_CDS_URL,
     SAUDI_EXCHANGE_TASI_URL,
     WORKBOOK_PATH,
     GASTAT_KPI08_SOURCE_PAGE,
@@ -221,6 +222,29 @@ class TasiInitialBaselineTests(unittest.TestCase):
         self.assertEqual(rows[0]["PeriodStart"], "2007-01-06")
         self.assertEqual(rows[-1]["PeriodStart"], "2026-11-17")
         self.assertEqual(rows[-1]["Close"], 10253.2)
+
+
+class PausedKpi14RefreshTests(unittest.TestCase):
+    def test_live_refresh_skips_investing_and_retains_all_cds_observations(self) -> None:
+        service = MartService(WORKBOOK_PATH, 1440)
+        before = service.facts_for("KPI_14")
+        with (
+            patch("kpi_dashboard.download_bytes", side_effect=OSError("source unavailable")) as download,
+            patch("kpi_dashboard.download_saudi_exchange_tasi_page", side_effect=OSError("source unavailable")),
+            patch("kpi_dashboard.post_json", side_effect=OSError("source unavailable")),
+        ):
+            result = service.refresh(live=True)
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(service.facts_for("KPI_14"), before)
+        self.assertEqual(len(before), 468)
+        self.assertEqual(max(fact["PeriodEnd"][:10] for fact in before), "2026-11-16")
+        self.assertFalse(any(INVESTING_CDS_URL in call.args[0] for call in download.call_args_list))
+        kpi = next(item for item in service.snapshot()["kpis"] if item["id"] == "KPI_14")
+        self.assertEqual(kpi["refreshStatus"], "paused")
+        self.assertEqual(kpi["refreshLabel"], "Paused by request")
+        self.assertEqual(kpi["observationCount"], 468)
+        self.assertFalse(kpi["liveExtractionConfigured"])
 
 
 class SamaPrivateImportsTests(unittest.TestCase):
@@ -427,11 +451,24 @@ class RefreshLogTests(unittest.TestCase):
                         "observationCount": 0,
                         "refreshNote": "Source timed out",
                     },
+                    {
+                        "id": "KPI_14",
+                        "name": "CDS",
+                        "refreshStatus": "paused",
+                        "refreshLabel": "Paused by request",
+                        "observationCount": 468,
+                        "latestObservation": "2026-11-16",
+                    },
                 ],
             },
             "2026-11-04T08:01:00+03:00",
         )
-        self.assertEqual(log["summary"], {"kpiCount": 2, "successCount": 1, "failedCount": 1})
+        self.assertEqual(log["summary"], {
+            "kpiCount": 3,
+            "successCount": 1,
+            "pausedCount": 1,
+            "failedCount": 1,
+        })
         self.assertEqual(log["entries"][0]["timestamp"], "2026-11-04T08:00:00+03:00")
         self.assertEqual(log["entries"][1]["detail"], "Source timed out")
         self.assertEqual(log["entries"][1]["timestamp"], "2026-11-04T08:00:00+03:00")
@@ -537,6 +574,21 @@ class DailyArchiveTests(unittest.TestCase):
             facts = last_successful_archive_facts(archive_dir, {"KPI_02"})
 
             self.assertEqual(facts, [last_good_fact])
+
+    def test_treats_paused_archive_as_retained_facts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            archive_dir = Path(directory)
+            retained_fact = {"KPI_ID": "KPI_14", "PeriodEnd": "2026-11-16", "Value": 67.61}
+            archive_daily_snapshot(
+                archive_dir,
+                {"kpis": [{"id": "KPI_14", "refreshStatus": "paused", "observationCount": 468}]},
+                [retained_fact],
+                "2026-11-17T10:07:00+03:00",
+            )
+
+            facts = last_successful_archive_facts(archive_dir, {"KPI_14"})
+
+            self.assertEqual(facts, [retained_fact])
 
     def test_uses_current_published_dataset_for_pre_refresh_archive(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1257,6 +1309,32 @@ class MartServiceTests(unittest.TestCase):
         self.assertEqual(kpi["latestValues"], [
             {"value": 250.0, "unit": "transactions", "sourceTable": "Test table"},
         ])
+
+    def test_paused_kpi_retains_last_published_facts(self) -> None:
+        catalog_item = self.service._data["catalog"][0].copy()
+        catalog_item.update({"KPI_ID": "KPI_14", "KPI_Name_Original": "CDS"})
+        self.service._data["catalog"].append(catalog_item)
+        self.service._refresh_states["KPI_14"] = {
+            "status": "paused",
+            "label": "Paused by request",
+        }
+        previous_fact = self.service._data["facts"][0].copy()
+        previous_fact.update({
+            "KPI_ID": "KPI_14",
+            "Value": 67.61,
+            "Unit": "basis points",
+            "PeriodStart": "2026-11-16",
+            "PeriodEnd": "2026-11-16",
+        })
+
+        self.service.retain_last_known_facts([previous_fact])
+
+        retained = self.service.facts_for("KPI_14")
+        self.assertEqual(len(retained), 1)
+        self.assertEqual(retained[0]["Value"], 67.61)
+        kpi = next(item for item in self.service.snapshot()["kpis"] if item["id"] == "KPI_14")
+        self.assertEqual(kpi["refreshStatus"], "paused")
+        self.assertEqual(kpi["latestObservation"], "2026-11-16")
 
     def test_failed_kpi_prefers_newer_published_facts_over_workbook_baseline(self) -> None:
         self.service._refresh_states["KPI_05"] = {

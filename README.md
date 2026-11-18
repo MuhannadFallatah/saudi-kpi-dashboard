@@ -52,11 +52,11 @@ Total of banks' claims on the private sector, sourced to SAMA), KPI 09
 (DataSaudi's monthly Saudi interbank offered rate, sourced to SAMA;
 tenor is not specified by the source), and KPI 14 (Investing.com daily Saudi
 5-year USD CDS close; its initial historical baseline was loaded once from a
-user-provided CSV covering 2025-01-01 through 2026-11-04. The CSV is not read
-on recurring runs; existing workbook history is retained while successful
-live observations may be added. The page exposes only about one month and may
-block runners), and KPI 15 (4,958 daily TASI closing values initially loaded
-from the Saudi Exchange Historical Reports page, covering 2007-01-06 through
+user-provided CSV covering 2025-01-01 through 2026-11-04. Live KPI 14 refresh
+is paused by request; the existing 468 observations, including the latest
+67.61 bps close dated 2026-11-16, remain available and are not replaced or
+deleted), and KPI 15 (4,958 daily TASI closing values initially loaded from
+the Saudi Exchange Historical Reports page, covering 2007-01-06 through
 2026-11-15). The same page embeds recent daily final closes in its HTML; refreshes
 merge those rows by trading date with the full historical baseline and the
 previously published KPI 15 history, preserving earlier observations.
@@ -87,8 +87,10 @@ credit opened), in SAR million, one `SourceTable` label each. Table 22 has no
 monthly data and is not loaded.
 Other KPIs appear in the status table as unavailable until their source routes
 and access are verified. KPI 10 (MISA) remains excluded by instruction.
-Green indicates a configured extraction succeeded; red indicates a failed or
-unavailable connector, no data, or intentional exclusion. Check observation
+Green indicates a configured extraction succeeded; amber indicates an
+intentional pause; red indicates a failed or unavailable connector, no data,
+or intentional exclusion. KPI 14's pause does not remove its retained facts.
+Check observation
 dates; success does not imply that the source has published a newer period.
 DataSaudi's PMI feed provides monthly values from August 2009. Confirm
 redistribution terms with the source owners before sharing the series with

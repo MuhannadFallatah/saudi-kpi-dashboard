@@ -396,6 +396,11 @@ def apply_configured_source_metadata(catalog: list[dict[str, Any]], sources: dic
             source_page_url = SAUDI_EXCHANGE_TASI_URL
             route = "Daily TASI closing values embedded in the Saudi Exchange Historical Reports page"
             note = TASI_REFRESH_NOTE
+        elif kpi_id == "KPI_14":
+            url = INVESTING_CDS_PAGE
+            source_page_url = INVESTING_CDS_PAGE
+            route = "Investing.com daily Saudi 5-year USD CDS close; refresh paused by request"
+            note = "Live refresh is paused by request; previously collected daily observations are retained."
         elif kpi_id in DATABASE_REPORT_URLS:
             url = DATABASE_REPORT_URLS[kpi_id]
             source_page_url = url
@@ -434,6 +439,13 @@ def apply_configured_source_metadata(catalog: list[dict[str, Any]], sources: dic
                 "APIMatchStatus": "Verified official report page",
                 "ExtractionStatus": "Live daily report extraction configured",
             })
+        if kpi_id == "KPI_14":
+            item.update({
+                "Source": "Investing.com",
+                "Frequency_or_TimeFrame": "Daily",
+                "APIMatchStatus": "Source identified; automated refresh paused",
+                "ExtractionStatus": "Refresh paused by request",
+            })
         source = sources.setdefault(kpi_id, {"KPI_ID": kpi_id})
         source.update({
             "PrimarySourceURL": source_page_url,
@@ -442,6 +454,7 @@ def apply_configured_source_metadata(catalog: list[dict[str, Any]], sources: dic
                 "Live API extraction configured" if kpi_id == "KPI_16"
                 else "Live quarterly report extraction configured" if kpi_id == "KPI_16_1"
                 else "Live daily report extraction configured" if kpi_id == "KPI_15"
+                else "Refresh paused by request" if kpi_id == "KPI_14"
                 else "Extracted"
             ),
             "ExtractionNote": note,
@@ -1760,17 +1773,25 @@ class MartService:
                 for item in data["catalog"]:
                     kpi_id = item["KPI_ID"]
                     excluded = kpi_id == "KPI_10"
+                    paused = kpi_id == "KPI_14"
                     has_data = counts.get(kpi_id, 0) > 0
                     self._refresh_states[kpi_id] = {
-                        "status": "green" if has_data and not excluded else "red",
+                        "status": "paused" if paused else "green" if has_data and not excluded else "red",
                         "label": (
+                            "Paused by request"
+                            if paused
+                            else
                             "Excluded by request"
                             if excluded
                             else "Snapshot loaded; awaiting live extraction"
                             if has_data
                             else "No observations loaded"
                         ),
-                        "note": "Live provider extraction has not run yet.",
+                        "note": (
+                            "Live Investing.com refresh is paused by request; retained observations remain available."
+                            if paused
+                            else "Live provider extraction has not run yet."
+                        ),
                         "checkedAt": timestamp,
                     }
                 self._next_refresh = (
@@ -1909,26 +1930,6 @@ class MartService:
             errors["KPI_15"] = str(error)
 
         try:
-            cds = extract_investing_cds(fetch(INVESTING_CDS_URL))
-            published_history: list[dict[str, Any]] = []
-            try:
-                previous = json.loads(
-                    download_bytes(PUBLISHED_KPI_URL.format(kpi_id="KPI_14") + f"?t={int(time.time())}")
-                )
-                published_history = previous.get("data", [])
-            except (OSError, ValueError, AttributeError):
-                pass
-            extracted["KPI_14"] = merge_cds_history(existing_facts, published_history, cds)
-            notes["KPI_14"] = (
-                "Extracted daily closes of the Saudi Arabia 5-year USD CDS from Investing.com "
-                f"({INVESTING_CDS_PAGE}); the page exposes roughly one month, so history accumulates "
-                "across refreshes. Existing workbook history, including the one-time initial CSV load, "
-                "is retained."
-            )
-        except (OSError, ValueError, KeyError, IndexError) as error:
-            errors["KPI_14"] = str(error)
-
-        try:
             report_urls = sama_pos_report_urls(fetch, full_history=full_kpi02_history)
             pos_facts: dict[tuple[str, str], dict[str, Any]] = {}
             report_errors: list[tuple[str, str]] = []
@@ -2043,7 +2044,7 @@ class MartService:
 
         replace_ids = {
             "KPI_01", "KPI_02", "KPI_03", "KPI_04", "KPI_05", "KPI_06", "KPI_07", "KPI_08",
-            "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_14", "KPI_15", "KPI_16", "KPI_16_1"
+            "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_15", "KPI_16", "KPI_16_1"
         }
         successful = {
             kpi_id: rows for kpi_id, rows in extracted.items()
@@ -2125,6 +2126,16 @@ class MartService:
                         "status": "red",
                         "label": "Excluded by request",
                         "note": "MISA extraction remains excluded per user instruction.",
+                        "checkedAt": timestamp,
+                    }
+                elif kpi_id == "KPI_14":
+                    self._refresh_states[kpi_id] = {
+                        "status": "paused",
+                        "label": "Paused by request",
+                        "note": (
+                            "Live Investing.com refresh is paused by request; "
+                            "previously collected daily observations are retained."
+                        ),
                         "checkedAt": timestamp,
                     }
                 elif kpi_id in errors:
@@ -2235,7 +2246,7 @@ class MartService:
                     "sourceAccessStatus": source.get("ExtractionStatus"),
                     "liveExtractionConfigured": kpi_id in {
                         "KPI_01", "KPI_02", "KPI_03", "KPI_04", "KPI_05", "KPI_06", "KPI_07", "KPI_08",
-                        "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_14", "KPI_15", "KPI_16", "KPI_16_1"
+                        "KPI_09", "KPI_11", "KPI_12", "KPI_13", "KPI_15", "KPI_16", "KPI_16_1"
                     },
                 }
             )
@@ -2258,6 +2269,7 @@ class MartService:
                 "quarterly capital-expenditure series for KPI 16 and the separate quarterly MOF "
                 "budget-performance reports for KPI 16.1. KPI 15 updates recent final daily closes from the "
                 "Saudi Exchange Historical Reports page and merges them into its retained daily history. "
+                "KPI 14 live refresh is paused by request; its existing observations remain available. "
                 "Other KPIs need verified provider-specific connectors."
             ),
             "factCount": len(facts),
@@ -2292,7 +2304,7 @@ class MartService:
                 for kpi_id in catalog_kpi_ids
                 if kpi_id == "KPI_02"
                 or (
-                    self._refresh_states.get(kpi_id, {}).get("status") == "red"
+                    self._refresh_states.get(kpi_id, {}).get("status") in {"red", "paused"}
                     and self._refresh_states.get(kpi_id, {}).get("label") != "Excluded by request"
                 )
             }
