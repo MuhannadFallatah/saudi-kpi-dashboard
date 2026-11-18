@@ -11,12 +11,12 @@
 *{box-sizing:border-box}body{margin:0}.top{background:#092b21;color:#f2ecda;padding:24px max(22px,calc((100vw - 1200px)/2));border-bottom:4px solid #b4975a}
 .top h1{margin:0;font-size:25px}.top p{margin:8px 0 0;color:#d9e5dd}.wrap{max-width:1200px;margin:24px auto;padding:0 20px}
 .toolbar{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0;align-items:center}.btn{border:0;border-radius:8px;padding:10px 14px;font-family:inherit;font-size:14px;font-weight:700;background:#00714d;color:#fff;text-decoration:none;cursor:pointer}
-.btn:hover{background:#173e35}.btn.secondary{background:#d9e5dd;color:#092b21}.btn.secondary:hover{background:#c2d6c9}.btn:disabled{opacity:.65;cursor:wait}:focus-visible{outline:3px solid #8a6e3d;outline-offset:3px}.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;margin:18px 0}
+.btn:hover{background:#173e35}.btn.secondary{background:#d9e5dd;color:#092b21}.btn.secondary:hover{background:#c2d6c9}.btn:disabled{opacity:.65;cursor:wait}:focus-visible{outline:3px solid #8a6e3d;outline-offset:3px}.stats{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin:18px 0}
 .stat,.tablebox,.alert{background:#fff;border:1px solid #d9e5dd;border-radius:12px}.stat{padding:16px}.stat small{color:#173e35}.stat strong{display:block;font-size:23px;margin-top:6px;color:#00714d}
 .tablebox{overflow:auto}table{width:100%;border-collapse:collapse;min-width:800px}th,td{text-align:left;padding:12px 13px;border-bottom:1px solid #d9e5dd;vertical-align:top}
 th{font-size:12px;text-transform:uppercase;color:#173e35;background:#d9e5dd;position:sticky;top:0}td{font-size:13px}
 .status{display:inline-flex;align-items:center;gap:7px;font-weight:700;white-space:nowrap}.dot{height:10px;width:10px;border-radius:50%;display:inline-block}
-.green .dot{background:#00714d}.red .dot{background:#a6433d}.muted,.foot{color:#173e35}.alert{padding:13px 15px;margin:16px 0;color:#a6433d;border-color:#a6433d;background:#f2ecda;white-space:pre-wrap}
+.green .dot{background:#00714d}.red .dot{background:#a6433d}.paused .dot{background:#a97719}.muted,.foot{color:#173e35}.alert{padding:13px 15px;margin:16px 0;color:#a6433d;border-color:#a6433d;background:#f2ecda;white-space:pre-wrap}
 .filters{display:flex;gap:10px;flex-wrap:wrap;margin:18px 0}.filters input,.filters select{padding:10px 12px;border:1px solid #9a9d98;border-radius:8px;background:#fff;color:#241c16;font-family:inherit}
 .filters input{flex:1;min-width:220px}.foot{font-size:12px;margin:14px 2px;line-height:1.5}#message{margin-left:auto;color:#173e35}
 @media(max-width:700px){.stats{grid-template-columns:1fr}.top h1{font-size:21px}}
@@ -40,12 +40,13 @@ th{font-size:12px;text-transform:uppercase;color:#173e35;background:#d9e5dd;posi
 <section class="stats" aria-label="Refresh summary">
 <div class="stat"><small>KPIs checked</small><strong id="kpiCount">—</strong></div>
 <div class="stat"><small>Successful</small><strong id="successCount">—</strong></div>
+<div class="stat"><small>Paused</small><strong id="pausedCount">—</strong></div>
 <div class="stat"><small>Failed or unavailable</small><strong id="failedCount">—</strong></div>
 </section>
 <div class="filters">
 <input id="search" type="search" placeholder="Search KPI or log details" aria-label="Search refresh log">
 <select id="statusFilter" aria-label="Filter by status">
-<option value="all">All results</option><option value="green">Successful</option><option value="red">Failed or unavailable</option>
+<option value="all">All results</option><option value="green">Successful</option><option value="paused">Paused</option><option value="red">Failed or unavailable</option>
 </select>
 </div>
 <div class="tablebox">
@@ -56,10 +57,10 @@ th{font-size:12px;text-transform:uppercase;color:#173e35;background:#d9e5dd;posi
 <p id="historyNotice" class="foot">Loading retained refresh runs…</p>
 <div id="historyError" class="alert" hidden></div>
 <div class="tablebox">
-<table><thead><tr><th>Run time (Riyadh)</th><th>Run</th><th>Trigger</th><th>Successful KPIs</th><th>Failed / excluded</th><th>Snapshot</th></tr></thead>
+<table><thead><tr><th>Run time (Riyadh)</th><th>Run</th><th>Trigger</th><th>Successful KPIs</th><th>Paused</th><th>Failed / excluded</th><th>Snapshot</th></tr></thead>
 <tbody id="historyRows"></tbody></table>
 </div>
-<p class="foot">The top table shows the latest result per KPI. The history table retains each workflow run and retry; download a JSON file for its per-KPI outcomes. History is committed to the repository and retained permanently. Red includes failed extraction, unavailable connector, and intentional exclusion.</p>
+<p class="foot">The top table shows the latest result per KPI. The history table retains each workflow run and retry; download a JSON file for its per-KPI outcomes. History is committed to the repository and retained permanently. Paused is an intentional pause; red includes failed extraction, unavailable connector, and intentional exclusion.</p>
 </main>
 <script>
 let entries=[];
@@ -75,7 +76,7 @@ function render(){
  const shown=entries.filter(e=>(filter==='all'||e.status===filter)&&(!term||[e.kpiId,e.kpiName,e.label,e.detail].some(v=>String(v??'').toLowerCase().includes(term))));
  document.getElementById('rows').innerHTML=shown.length?shown.map(e=>`<tr>
  <td>${esc(ksa(e.timestamp))}</td><td><strong>${esc(e.kpiId)}</strong><br>${esc(e.kpiName)}</td>
- <td><span class="status ${e.status==='green'?'green':'red'}"><i class="dot"></i>${esc(e.label)}</span></td>
+ <td><span class="status ${esc(e.status)}"><i class="dot"></i>${esc(e.label)}</span></td>
  <td>${Number(e.observationCount||0).toLocaleString()}</td><td>${esc(e.latestObservation||'—')}</td><td>${esc(e.detail||'No extraction details')}</td>
  </tr>`).join(''):'<tr><td colspan="6">No matching log entries.</td></tr>';
 }
@@ -87,7 +88,8 @@ async function load(){
  document.getElementById('notice').textContent='Last refresh: '+ksa(d.lastRefresh)+' · Log generated: '+ksa(d.generatedAt);
  document.getElementById('kpiCount').textContent=d.summary?.kpiCount??entries.length;
  document.getElementById('successCount').textContent=d.summary?.successCount??entries.filter(e=>e.status==='green').length;
- document.getElementById('failedCount').textContent=d.summary?.failedCount??entries.filter(e=>e.status!=='green').length;
+ document.getElementById('pausedCount').textContent=d.summary?.pausedCount??entries.filter(e=>e.status==='paused').length;
+ document.getElementById('failedCount').textContent=d.summary?.failedCount??entries.filter(e=>e.status==='red').length;
  const error=document.getElementById('runError');
  if(d.lastError){error.hidden=false;error.textContent='Refresh-level error: '+d.lastError}else{error.hidden=true;error.textContent=''}
  render();
@@ -104,9 +106,10 @@ async function load(){
    <td><strong>${esc(run.runNumber||run.runId)}</strong>${run.attempt&&run.attempt!=='1'?' · attempt '+esc(run.attempt):''}</td>
    <td>${esc(run.event||'—')}</td>
    <td>${Number(run.summary?.successCount||0).toLocaleString()}</td>
+   <td>${Number(run.summary?.pausedCount||0).toLocaleString()}</td>
    <td>${Number(run.summary?.failedCount||0).toLocaleString()}</td>
    <td><a href="refresh-history/${encodeURIComponent(run.url)}">View run log</a></td></tr>`).join('')
-   :'<tr><td colspan="6">No archived refresh runs.</td></tr>';
+   :'<tr><td colspan="7">No archived refresh runs.</td></tr>';
   document.getElementById('historyError').hidden=true;
  }catch(e){
   const historyError=document.getElementById('historyError');
