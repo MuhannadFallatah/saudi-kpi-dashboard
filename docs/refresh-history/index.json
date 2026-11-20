@@ -1,6 +1,21 @@
 {
   "runs": [
     {
+      "historyId": "44748222488-1",
+      "generatedAt": "2026-11-20T18:29:06+03:00",
+      "runId": "44748222488",
+      "runNumber": "135",
+      "attempt": "1",
+      "event": "schedule",
+      "summary": {
+        "kpiCount": 17,
+        "successCount": 15,
+        "pausedCount": 1,
+        "failedCount": 1
+      },
+      "url": "20261120T182906+0300-44748222488-1.json"
+    },
+    {
       "historyId": "44541189695-1",
       "generatedAt": "2026-11-19T17:18:51+03:00",
       "runId": "44541189695",
