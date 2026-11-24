@@ -1,6 +1,13 @@
 {
   "snapshots": [
     {
+      "date": "2026-11-24",
+      "archivedAt": "2026-11-24T18:46:20+03:00",
+      "factCount": 8846,
+      "kpiCount": 17,
+      "url": "2026-11-24.json.gz"
+    },
+    {
       "date": "2026-11-23",
       "archivedAt": "2026-11-23T20:06:50+03:00",
       "factCount": 8844,
